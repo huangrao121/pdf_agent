@@ -1,4 +1,4 @@
-from models.model_base import Base, TimestampMixin
+from database.models.model_base import Base, TimestampMixin
 
 from sqlalchemy import Integer, ForeignKey, String, Text, DateTime, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from models.model_user import UserModel
+    from database.models.model_user import UserModel
 
 
 class OAuthIdentityModel(Base, TimestampMixin):
@@ -142,7 +142,7 @@ class VerificationCodeModel(Base, TimestampMixin):
     
     # 额外信息（JSON 格式存储）
     # 例如：更换邮箱时存储新邮箱地址 {"new_email": "new@example.com"}
-    metadata: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    extra_data: Mapped[Optional[str]] = mapped_column("metadata", Text, nullable=True)
     
     # Relationships
     user: Mapped["UserModel"] = relationship(

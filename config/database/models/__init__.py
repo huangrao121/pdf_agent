@@ -1,7 +1,7 @@
 # Import all models to ensure they are registered with SQLAlchemy
-from models.model_base import Base, TimestampMixin, CreatedMixin
-from models.model_user import UserModel, WorkspaceModel
-from models.model_document import (
+from database.models.model_base import Base, TimestampMixin, CreatedMixin
+from database.models.model_user import UserModel, WorkspaceModel
+from database.models.model_document import (
     DocsModel,
     ChunksModel,
     NoteModel,
@@ -14,7 +14,7 @@ from models.model_document import (
     JobTypeEnum,
     JobStatusEnum,
 )
-from models.model_auth import (
+from database.models.model_auth import (
     OAuthIdentityModel,
     PasswordCredentialModel,
     VerificationCodeModel,
