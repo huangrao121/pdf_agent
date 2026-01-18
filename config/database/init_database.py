@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from functools import lru_cache
 
 from database.models.model_base import Base
+# Import all models to register them with SQLAlchemy
+import database.models  # noqa: F401
 
 Base = Base()
 
