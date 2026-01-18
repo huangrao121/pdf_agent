@@ -221,7 +221,9 @@ class TestTokenVerification:
         # Decode, modify, re-encode payload
         import base64
         import json
-        payload = json.loads(base64.urlsafe_b64decode(parts[1] + '=='))
+        # Add proper padding
+        padding = (4 - len(parts[1]) % 4) % 4
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + '=' * padding))
         payload["sub"] = "hacker"
         tampered_payload = base64.urlsafe_b64encode(
             json.dumps(payload).encode()

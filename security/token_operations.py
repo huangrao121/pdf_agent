@@ -199,7 +199,6 @@ class TokenOperations:
             payload = jwt.decode(
                 token,
                 options={"verify_signature": False},
-                algorithms=self.ALLOWED_ALGORITHMS,
             )
             return payload
         except jwt.DecodeError as e:
