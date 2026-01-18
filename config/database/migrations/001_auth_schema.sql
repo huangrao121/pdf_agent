@@ -20,7 +20,7 @@
 -- One user can have multiple OAuth identities linked
 
 CREATE TABLE IF NOT EXISTS oauth_identities (
-    oauth_identity_id SERIAL PRIMARY KEY,
+    oauth_identity_id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     
     -- OAuth provider information
@@ -82,7 +82,7 @@ CREATE INDEX idx_password_credentials_email ON password_credentials(email);
 -- - Change email (verify new email address)
 
 CREATE TABLE IF NOT EXISTS verification_codes (
-    verification_code_id SERIAL PRIMARY KEY,
+    verification_code_id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     
     -- Verification code information

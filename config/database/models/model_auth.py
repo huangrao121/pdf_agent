@@ -50,10 +50,10 @@ class OAuthIdentityModel(Base, TimestampMixin):
     )
 
     # Primary key
-    oauth_identity_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    oauth_identity_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     
     # Foreign key - linked user
-    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey('users.user_id'), nullable=False, index=True)
+    user_id: Mapped[BigInteger] = mapped_column(BigInteger, ForeignKey('users.user_id'), nullable=False, index=True)
 
     # OAuth provider information
     provider: Mapped[str] = mapped_column(
@@ -91,7 +91,7 @@ class PasswordCredentialModel(Base, TimestampMixin):
     __tablename__ = 'password_credentials'
 
     # Primary key (also FK to users table - 1:1 relationship)
-    user_id: Mapped[int] = mapped_column(
+    user_id: Mapped[BigInteger] = mapped_column(
         BigInteger, 
         ForeignKey('users.user_id'), 
         primary_key=True
@@ -153,10 +153,10 @@ class VerificationCodeModel(Base, CreatedMixin):
     )
 
     # Primary key
-    verification_code_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    verification_code_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     
     # Foreign key - user this code belongs to
-    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey('users.user_id'), nullable=False, index=True)
+    user_id: Mapped[BigInteger] = mapped_column(BigInteger, ForeignKey('users.user_id'), nullable=False, index=True)
 
     # Verification code information
     code_type: Mapped[str] = mapped_column(
