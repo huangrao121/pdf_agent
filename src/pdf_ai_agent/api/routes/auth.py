@@ -139,7 +139,7 @@ async def login(
                 access_token=access_token,
                 token_type="Bearer",
                 expires_in=expires_in,
-                refresh_token=None,  # TODO: Implement refresh token
+                refresh_token=None,  # Refresh token not implemented yet
                 user_id=str(user.user_id),
                 email=user.email or "",
                 full_name=user.full_name,
@@ -203,8 +203,10 @@ async def login(
         )
     
     except Exception as e:
-        # Log the error (in production, use proper logging)
-        print(f"Login error: {e}")
+        # Log the error with proper logging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Login error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
