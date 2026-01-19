@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from functools import lru_cache
 
-from database.models.model_base import Base
+from pdf_ai_agent.config.database.models.model_base import Base
 
 Base = Base()
 
