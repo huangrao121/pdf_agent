@@ -29,6 +29,7 @@ class UserModel(Base, TimestampMixin):
     username: Mapped[str] = mapped_column(String(150), nullable=False, unique=True)  # 用户名（登录用）
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, unique=True)  # 邮箱
     full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # 全名/显示名称
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)  # 密码哈希
     
     # 权限标记
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)  # 账户是否激活
