@@ -1,4 +1,4 @@
-from models.model_base import Base, TimestampMixin
+from pdf_ai_agent.config.database.models.model_base import Base, TimestampMixin
 
 from sqlalchemy import Integer, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -6,7 +6,7 @@ from sqlalchemy import BigInteger, String, Boolean
 
 from typing import Optional, TYPE_CHECKING
 if TYPE_CHECKING:
-    from models.model_document import DocsModel, NoteModel, ChatSessionModel, JobModel
+    from pdf_ai_agent.config.database.models.model_document import DocsModel, NoteModel, ChatSessionModel, JobModel
 
 class UserModel(Base, TimestampMixin):
     """用户模型 - 系统用户账户

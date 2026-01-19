@@ -9,9 +9,11 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.backends import default_backend
 
-from security import (
+from pdf_ai_agent.security.key_manager import (
     KeyManager,
-    TokenOperations,
+)
+from pdf_ai_agent.security.token_operations import TokenOperations
+from pdf_ai_agent.security.exceptions import (
     TokenExpiredError,
     InvalidSignatureError,
     InvalidIssuerError,
