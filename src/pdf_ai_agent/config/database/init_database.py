@@ -16,10 +16,10 @@ class DatabaseConfig(BaseSettings):
     DatabaseConfig 的 Docstring
     """
     database_type: str = Field(..., description="数据库类型，如 'sqlite', 'postgresql', 'mysql' 等")
-    database_username: str = Field(..., description="数据库用户名")
-    database_password: str = Field(..., description="数据库密码")
-    database_host: str = Field(..., description="数据库主机地址")
-    database_port: int = Field(..., description="数据库端口号")
+    database_username: str = Field(default="", description="数据库用户名")
+    database_password: str = Field(default="", description="数据库密码")
+    database_host: str = Field(default="", description="数据库主机地址")
+    database_port: int = Field(default=0, description="数据库端口号")
     database_name: str = Field(..., description="数据库名称")
 
     model_config = ConfigDict(
@@ -43,7 +43,18 @@ async def init_database(config: DatabaseConfig):
     """
     # 在这里添加数据库初始化逻辑，例如创建连接池等
     global _engine, _session
-    url = f"{config.database_type}://{config.database_username}:{config.database_password}@{config.database_host}:{config.database_port}/{config.database_name}"
+    
+    # Build database URL based on type
+    if config.database_type.startswith('sqlite'):
+        # SQLite URL format: sqlite+aiosqlite:///:memory: or sqlite+aiosqlite:///path/to/db.db
+        if config.database_name == ":memory:":
+            url = f"{config.database_type}:///:memory:"
+        else:
+            url = f"{config.database_type}:///{config.database_name}"
+    else:
+        # PostgreSQL/MySQL URL format
+        url = f"{config.database_type}://{config.database_username}:{config.database_password}@{config.database_host}:{config.database_port}/{config.database_name}"
+    
     try:
         _engine = create_async_engine(url)
         _session = async_sessionmaker(
