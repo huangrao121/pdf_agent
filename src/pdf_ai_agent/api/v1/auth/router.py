@@ -37,10 +37,13 @@ def get_token_operations() -> TokenOperations:
     issuer = os.getenv("JWT_ISSUER", "pdf-agent-api")
     audience = os.getenv("JWT_AUDIENCE", "pdf-agent-users")
     
-    # For now, if keys are not in environment, we'll use test keys
-    # In production, this should fail if keys are missing
+    # In production, these should be loaded from secure configuration
     if not private_key_pem or not public_key_pem:
-        # Generate temporary keys for development
+        # For development/testing only - generate temporary keys
+        # WARNING: Do not use in production!
+        import logging
+        logging.warning("JWT keys not found in environment - generating temporary keys for development only")
+        
         from cryptography.hazmat.primitives.asymmetric import ec
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.backends import default_backend

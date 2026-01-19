@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """
 Test script to demonstrate the user registration endpoint.
 """
