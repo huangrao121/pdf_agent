@@ -29,10 +29,12 @@ class UserModel(Base, TimestampMixin):
     username: Mapped[str] = mapped_column(String(150), nullable=False, unique=True)  # 用户名（登录用）
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, unique=True)  # 邮箱
     full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # 全名/显示名称
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)  # 哈希密码
     
     # 权限标记
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)  # 账户是否激活
     is_superuser: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # 是否为超级管理员
+    email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # 邮箱是否验证
 
     # Relationships
     documents: Mapped[list["DocsModel"]] = relationship(

@@ -19,6 +19,11 @@ async def lifespan(app: FastAPI):
 def create_app():
     load_dotenv()
     app = FastAPI(title="PDF_Agent",lifespan=lifespan)
+    
+    # Register routers
+    from pdf_ai_agent.api.routes.auth import router as auth_router
+    app.include_router(auth_router)
+    
     @app.get("/health", tags=["Health Check"])
     async def health_check():
         return {"status": "ok"}
