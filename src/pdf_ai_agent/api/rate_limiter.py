@@ -1,7 +1,7 @@
 """
 Simple in-memory rate limiter for authentication endpoints.
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Tuple
 from collections import defaultdict
 import threading
@@ -47,7 +47,7 @@ class RateLimiter:
             Tuple of (is_limited, retry_after_seconds)
         """
         with self._lock:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             self._clean_old_attempts(key, now)
             
             attempts = self._attempts[key]
@@ -67,7 +67,7 @@ class RateLimiter:
             key: Identifier to record (e.g., IP address or email)
         """
         with self._lock:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             self._clean_old_attempts(key, now)
             self._attempts[key].append(now)
     

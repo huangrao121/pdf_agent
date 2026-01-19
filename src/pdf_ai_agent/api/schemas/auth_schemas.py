@@ -1,18 +1,18 @@
 """
 Authentication request and response schemas.
 """
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from typing import Optional
 
 
 class LoginRequest(BaseModel):
     """Login request schema."""
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+    )
+    
     email: EmailStr = Field(..., description="User email address")
     password: str = Field(..., min_length=1, description="User password")
-    
-    class Config:
-        str_strip_whitespace = True
-        str_to_lower = True
 
 
 class LoginResponse(BaseModel):
