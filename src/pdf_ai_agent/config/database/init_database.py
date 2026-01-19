@@ -41,6 +41,10 @@ async def init_database(config: DatabaseConfig):
     生成:
         AsyncGenerator[None, None]: 异步生成器，初始化完成后生成 None。
     """
+    # Import user model to ensure it's registered with SQLAlchemy
+    # Note: model_document has issues and is not needed for basic auth functionality
+    from pdf_ai_agent.config.database.models import model_user
+    
     # 在这里添加数据库初始化逻辑，例如创建连接池等
     global _engine, _session
     

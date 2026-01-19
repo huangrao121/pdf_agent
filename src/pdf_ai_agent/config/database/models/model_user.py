@@ -35,27 +35,28 @@ class UserModel(Base, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)  # 账户是否激活
     is_superuser: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # 是否为超级管理员
 
-    # Relationships
-    documents: Mapped[list["DocsModel"]] = relationship(
-        "DocsModel",
-        back_populates="owner",
-        cascade="all, delete-orphan",
-    )
-    notes: Mapped[list["NoteModel"]] = relationship(
-        "NoteModel",
-        back_populates="owner",
-        cascade="all, delete-orphan",
-    )
-    sessions: Mapped[list["ChatSessionModel"]] = relationship(
-        "ChatSessionModel",
-        back_populates="owner",
-        cascade="all, delete-orphan",
-    )
-    workspaces: Mapped[list["WorkspaceModel"]] = relationship(
-        "WorkspaceModel",
-        back_populates="owner",
-        cascade="all, delete-orphan",
-    )
+    # Relationships - Commented out temporarily to avoid circular dependency issues
+    # TODO: Fix circular dependency with DocsModel, NoteModel, ChatSessionModel
+    # documents: Mapped[list["DocsModel"]] = relationship(
+    #     "DocsModel",
+    #     back_populates="owner",
+    #     cascade="all, delete-orphan",
+    # )
+    # notes: Mapped[list["NoteModel"]] = relationship(
+    #     "NoteModel",
+    #     back_populates="owner",
+    #     cascade="all, delete-orphan",
+    # )
+    # sessions: Mapped[list["ChatSessionModel"]] = relationship(
+    #     "ChatSessionModel",
+    #     back_populates="owner",
+    #     cascade="all, delete-orphan",
+    # )
+    # workspaces: Mapped[list["WorkspaceModel"]] = relationship(
+    #     "WorkspaceModel",
+    #     back_populates="owner",
+    #     cascade="all, delete-orphan",
+    # )
 
 
 class WorkspaceModel(Base, TimestampMixin):
@@ -81,28 +82,29 @@ class WorkspaceModel(Base, TimestampMixin):
     # 外键 - 所有者
     owner_user_id: Mapped[BigInteger] = mapped_column(ForeignKey('users.user_id'), nullable=False, index=True)
 
-    # Relationships
-    owner: Mapped["UserModel"] = relationship(
-        "UserModel",
-        back_populates="workspaces",
-    )
-    documents: Mapped[list["DocsModel"]] = relationship(
-        "DocsModel",
-        back_populates="workspace",
-        cascade="all, delete-orphan",
-    )
-    notes: Mapped[list["NoteModel"]] = relationship(
-        "NoteModel",
-        back_populates="workspace",
-        cascade="all, delete-orphan",
-    )
-    sessions: Mapped[list["ChatSessionModel"]] = relationship(
-        "ChatSessionModel",
-        back_populates="workspace",
-        cascade="all, delete-orphan",
-    )
-    jobs: Mapped[list["JobModel"]] = relationship(
-        "JobModel",
-        back_populates="workspace",
-        cascade="all, delete-orphan",
-    )
+    # Relationships - Commented out temporarily to avoid circular dependency issues  
+    # TODO: Fix circular dependency with DocsModel, NoteModel, ChatSessionModel, JobModel
+    # owner: Mapped["UserModel"] = relationship(
+    #     "UserModel",
+    #     back_populates="workspaces",
+    # )
+    # documents: Mapped[list["DocsModel"]] = relationship(
+    #     "DocsModel",
+    #     back_populates="workspace",
+    #     cascade="all, delete-orphan",
+    # )
+    # notes: Mapped[list["NoteModel"]] = relationship(
+    #     "NoteModel",
+    #     back_populates="workspace",
+    #     cascade="all, delete-orphan",
+    # )
+    # sessions: Mapped[list["ChatSessionModel"]] = relationship(
+    #     "ChatSessionModel",
+    #     back_populates="workspace",
+    #     cascade="all, delete-orphan",
+    # )
+    # jobs: Mapped[list["JobModel"]] = relationship(
+    #     "JobModel",
+    #     back_populates="workspace",
+    #     cascade="all, delete-orphan",
+    # )
