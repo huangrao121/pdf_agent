@@ -15,7 +15,7 @@ from typing import Optional, Dict, TYPE_CHECKING
 from pdf_ai_agent.config.database.models.model_base import Base, TimestampMixin, CreatedMixin
 
 if TYPE_CHECKING:
-    from models.model_user import UserModel, WorkspaceModel
+    from .model_user import UserModel, WorkspaceModel
 
 class DocStatus(PyEnum):
     UPLOADED = "uploaded"
