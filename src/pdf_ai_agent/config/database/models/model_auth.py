@@ -17,10 +17,10 @@ from enum import Enum as PyEnum
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 
-from .model_base import Base, TimestampMixin, CreatedMixin
+from pdf_ai_agent.config.database.models.model_base import Base, TimestampMixin, CreatedMixin
 
 if TYPE_CHECKING:
-    from .model_user import UserModel
+    from pdf_ai_agent.config.database.models.model_user import UserModel
 
 
 class OAuthProviderEnum(PyEnum):
