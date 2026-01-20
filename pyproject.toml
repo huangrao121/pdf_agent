@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "pdf-ai-agent"
 version = "0.1.0"
@@ -10,4 +14,31 @@ dependencies = [
     "pydantic-settings>=2.12.0",
     "sqlalchemy>=2.0.45",
     "uvicorn>=0.40.0",
+    "pyjwt>=2.10.1",
+    "cryptography>=42.0.0",
+    "pytest>=9.0.2",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+packages = ["pdf_ai_agent"]  # 自动发现 src/pdf_ai_agent 及其子包
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["test"]
+minversion = "8.0"
+addopts = "-v"
+
+[tool.black]
+line-length = 88
+target-version = ["py39"]
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+src_paths = ["src", "test"]

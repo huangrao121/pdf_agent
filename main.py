@@ -7,7 +7,7 @@ load_dotenv()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from config.database.init_database import get_database_config, init_database, close_engine
+    from pdf_ai_agent.config.database.init_database import get_database_config, init_database, close_engine
 
     config = get_database_config()
     await init_database(config)
