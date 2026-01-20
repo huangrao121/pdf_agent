@@ -15,7 +15,7 @@ from typing import Optional, Dict, TYPE_CHECKING
 from pdf_ai_agent.config.database.models.model_base import Base, TimestampMixin, CreatedMixin
 
 if TYPE_CHECKING:
-    from .model_user import UserModel, WorkspaceModel
+    from pdf_ai_agent.config.database.models.model_user import UserModel, WorkspaceModel
 
 class DocStatus(PyEnum):
     UPLOADED = "uploaded"
@@ -340,7 +340,7 @@ class MessageModel(Base, CreatedMixin):
     # 消息内容
     content: Mapped[str] = mapped_column(Text, nullable=False)  # 消息文本内容
     role: Mapped[str] = mapped_column(
-        Enum(RoleEnum, values_callable=lambda: [e.value for e in RoleEnum]), 
+        Enum(RoleEnum, values_callable=lambda x: [e.value for e in x]), 
         nullable=False
     )  # 角色：user（用户）、assistant（AI）、system（系统）、tool（工具）
 
@@ -411,11 +411,11 @@ class JobModel(Base, TimestampMixin):
 
     # 任务状态
     job_type: Mapped[str] = mapped_column(
-        Enum(JobTypeEnum, values_callable=lambda: [e.value for e in JobTypeEnum]), 
+        Enum(JobTypeEnum, values_callable=lambda x: [e.value for e in x]), 
         nullable=False
     )  # 任务类型：ingest_document, reindex_document, delete_document
     status: Mapped[str] = mapped_column(
-        Enum(JobStatusEnum, values_callable=lambda: [e.value for e in JobStatusEnum]), 
+        Enum(JobStatusEnum, values_callable=lambda x: [e.value for e in x]), 
         nullable=False, 
         default=JobStatusEnum.PENDING
     )  # 任务状态：pending, in_progress, completed, failed, canceled
