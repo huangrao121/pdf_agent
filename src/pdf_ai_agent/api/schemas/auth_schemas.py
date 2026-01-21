@@ -104,3 +104,28 @@ class RegisterResponse(BaseModel):
     message: str = Field(default="registration successful", description="Response message")
     token: str = Field(..., description="JWT access token")
     data: RegisterData
+
+
+class OAuthAuthorizeRequest(BaseModel):
+    """OAuth authorization request schema."""
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+    )
+    
+    redirect_to: str = Field(
+        default="/app",
+        description="Frontend path to redirect after successful login"
+    )
+
+
+class OAuthAuthorizeData(BaseModel):
+    """OAuth authorization data containing URL and state."""
+    authorization_url: str = Field(..., description="Google OAuth authorization URL")
+    provider: str = Field(default="google", description="OAuth provider")
+    state: str = Field(..., description="OAuth state parameter")
+
+
+class OAuthAuthorizeResponse(BaseModel):
+    """OAuth authorization success response schema."""
+    status: str = Field(default="ok", description="Response status")
+    data: OAuthAuthorizeData
