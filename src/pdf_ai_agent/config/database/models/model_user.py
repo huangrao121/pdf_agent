@@ -30,7 +30,7 @@ class UserModel(Base, TimestampMixin):
     __tablename__ = 'users'
 
     # 主键
-    user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True, nullable=False)
     
     # 档案信息（用户资料，不包含认证凭据）
     username: Mapped[str] = mapped_column(String(150), nullable=False, unique=True)  # 用户名（唯一标识）

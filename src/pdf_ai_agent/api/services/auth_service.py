@@ -47,16 +47,24 @@ class AuthService:
         # Normalize email to lowercase
         email = email.lower().strip()
         
-        # Query user by email
+        # Query password credential by email to get password_hash
         result = await self.db_session.execute(
-            select(UserModel).where(UserModel.email == email)
-            .join(PasswordCredentialModel, UserModel.user_id == PasswordCredentialModel.user_id)
+            select(PasswordCredentialModel).where(PasswordCredentialModel.email == email)
+        )
+        password_credential = result.scalar_one_or_none()
+        
+        # Check if credential exists and password is correct
+        # Use constant-time comparison to prevent timing attacks
+        if password_credential is None or not verify_password(password, password_credential.password_hash):
+            raise InvalidCredentialsError()
+        
+        # Query user by user_id from password credential
+        result = await self.db_session.execute(
+            select(UserModel).where(UserModel.user_id == password_credential.user_id)
         )
         user = result.scalar_one_or_none()
         
-        # Check if user exists and password is correct
-        # Use constant-time comparison to prevent timing attacks
-        if user is None or not verify_password(password, user.password_hash):
+        if user is None:
             raise InvalidCredentialsError()
         
         # Check if account is active

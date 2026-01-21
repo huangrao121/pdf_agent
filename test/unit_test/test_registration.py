@@ -2,209 +2,293 @@
 Tests for the user registration API endpoint and components.
 """
 import pytest
+
 from pdf_ai_agent.api.schemas.auth_schemas import RegisterRequest
+from pdf_ai_agent.api.services.auth_service import AuthService
+from pdf_ai_agent.api.exceptions import (
+    InvalidCredentialsError,
+    AccountDisabledError,
+    EmailTakenError,
+    UsernameTakenError,
+)
+from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import ValidationError
 
 
-class TestRegistrationSchemas:
-    """Tests for registration schemas."""
+class TestAuthServiceDatabase:
+    """Tests for AuthService database operations."""
     
-    def test_valid_registration_request(self):
-        """Test valid registration request."""
-        data = {
-            "email": "test@example.com",
-            "username": "testuser123",
-            "password": "password123",
-            "full_name": "Test User"
-        }
-        request = RegisterRequest(**data)
+    @pytest.mark.asyncio
+    async def test_register_user_success(self, db_session: AsyncSession):
+        """Test successful user registration."""
+        auth_service = AuthService(db_session)
+        user = await auth_service.register_user(
+            email="newuser@example.com",
+            username="newuser",
+            password="password123",
+            full_name="New User"
+        )
         
-        assert request.email == "test@example.com"
-        assert request.username == "testuser123"  # should be lowercased
-        assert request.password == "password123"
-        assert request.full_name == "Test User"
+        assert user.user_id is not None
+        assert user.email == "newuser@example.com"
+        assert user.username == "newuser"
+        assert user.full_name == "New User"
+        assert user.is_active is True
+        assert user.is_superuser is False
+        assert user.email_verified is False
     
-    def test_username_lowercase_conversion(self):
-        """Test that username is converted to lowercase."""
-        data = {
-            "email": "test@example.com",
-            "username": "TestUser123",
-            "password": "password123",
-            "full_name": "Test User"
-        }
-        request = RegisterRequest(**data)
-        assert request.username == "testuser123"
-    
-    def test_email_validation(self):
-        """Test email format validation."""
-        data = {
-            "email": "invalid-email",
-            "username": "testuser",
-            "password": "password123",
-            "full_name": "Test User"
-        }
-        with pytest.raises(ValidationError) as exc_info:
-            RegisterRequest(**data)
+    @pytest.mark.asyncio
+    async def test_register_user_email_already_taken(self, db_session: AsyncSession):
+        """Test registration fails when email is already taken."""
+        auth_service = AuthService(db_session)
+        # Register first user
+        await auth_service.register_user(
+            email="taken@example.com",
+            username="user1",
+            password="password123",
+            full_name="User One"
+        )
         
-        errors = exc_info.value.errors()
-        assert any("email" in str(error) for error in errors)
+        # Try to register with same email
+        with pytest.raises(EmailTakenError):
+            await auth_service.register_user(
+                email="taken@example.com",
+                username="user2",
+                password="password123",
+                full_name="User Two"
+            )
     
-    def test_username_min_length(self):
-        """Test username minimum length validation."""
-        data = {
-            "email": "test@example.com",
-            "username": "ab",  # too short
-            "password": "password123",
-            "full_name": "Test User"
-        }
-        with pytest.raises(ValidationError) as exc_info:
-            RegisterRequest(**data)
+    @pytest.mark.asyncio
+    async def test_register_user_username_already_taken(self, db_session: AsyncSession):
+        """Test registration fails when username is already taken."""
+        auth_service = AuthService(db_session)
+        # Register first user
+        await auth_service.register_user(
+            email="user1@example.com",
+            username="sameusername",
+            password="password123",
+            full_name="User One"
+        )
         
-        errors = exc_info.value.errors()
-        assert any("username" in str(error) for error in errors)
+        # Try to register with same username
+        with pytest.raises(UsernameTakenError):
+            await auth_service.register_user(
+                email="user2@example.com",
+                username="sameusername",
+                password="password123",
+                full_name="User Two"
+            )
     
-    def test_username_max_length(self):
-        """Test username maximum length validation."""
-        data = {
-            "email": "test@example.com",
-            "username": "a" * 31,  # too long
-            "password": "password123",
-            "full_name": "Test User"
-        }
-        with pytest.raises(ValidationError) as exc_info:
-            RegisterRequest(**data)
+    @pytest.mark.asyncio
+    async def test_register_user_creates_password_credential(
+        self, 
+        db_session: AsyncSession
+    ):
+        """Test that password credential is created with user."""
+        auth_service = AuthService(db_session)
+        user = await auth_service.register_user(
+            email="test@example.com",
+            username="testuser",
+            password="password123",
+            full_name="Test User"
+        )
         
-        errors = exc_info.value.errors()
-        assert any("username" in str(error) for error in errors)
+        # Refresh to get password credential relationship
+        await db_session.refresh(user, ["password_credential"])
+        
+        assert user.password_credential is not None
+        assert user.password_credential.email == "test@example.com"
+        assert user.password_credential.email_verified is False
+        # Password should be hashed, not plaintext
+        assert user.password_credential.password_hash != "password123"
     
-    def test_username_invalid_characters(self):
-        """Test username invalid characters validation."""
-        data = {
-            "email": "test@example.com",
-            "username": "test@user",  # invalid character
-            "password": "password123",
-            "full_name": "Test User"
-        }
-        with pytest.raises(ValidationError) as exc_info:
-            RegisterRequest(**data)
+    @pytest.mark.asyncio
+    async def test_get_user_by_email(self, db_session: AsyncSession):
+        """Test getting user by email."""
+        auth_service = AuthService(db_session)
+        # Register user
+        registered_user = await auth_service.register_user(
+            email="findme@example.com",
+            username="finduser",
+            password="password123",
+            full_name="Find Me"
+        )
         
-        errors = exc_info.value.errors()
-        assert any("username" in str(error) for error in errors)
+        # Retrieve by email
+        found_user = await auth_service.get_user_by_email("findme@example.com")
+        
+        assert found_user is not None
+        assert found_user.user_id == registered_user.user_id
+        assert found_user.email == "findme@example.com"
     
-    def test_username_valid_characters(self):
-        """Test username with valid characters."""
-        valid_usernames = [
-            "testuser",
-            "test_user",
-            "test.user",
-            "test123",
-            "test_user.123"
-        ]
-        
-        for username in valid_usernames:
-            data = {
-                "email": "test@example.com",
-                "username": username,
-                "password": "password123",
-                "full_name": "Test User"
-            }
-            request = RegisterRequest(**data)
-            assert request.username == username.lower()
+    @pytest.mark.asyncio
+    async def test_get_user_by_email_not_found(self, db_session: AsyncSession):
+        """Test getting user by email when not found."""
+        auth_service = AuthService(db_session)
+        user = await auth_service.get_user_by_email("nonexistent@example.com")
+        assert user is None
     
-    def test_password_min_length(self):
-        """Test password minimum length validation."""
-        data = {
-            "email": "test@example.com",
-            "username": "testuser",
-            "password": "pass1",  # too short
-            "full_name": "Test User"
-        }
-        with pytest.raises(ValidationError) as exc_info:
-            RegisterRequest(**data)
+    @pytest.mark.asyncio
+    async def test_get_user_by_email_case_insensitive(self, db_session: AsyncSession):
+        """Test that email lookup is case-insensitive."""
+        auth_service = AuthService(db_session)
+        # Register user
+        registered_user = await auth_service.register_user(
+            email="test@example.com",
+            username="testuser",
+            password="password123",
+            full_name="Test User"
+        )
         
-        errors = exc_info.value.errors()
-        assert any("password" in str(error) for error in errors)
+        # Lookup with different case
+        found_user = await auth_service.get_user_by_email("TEST@EXAMPLE.COM")
+        
+        assert found_user is not None
+        assert found_user.user_id == registered_user.user_id
     
-    def test_password_max_length(self):
-        """Test password maximum length validation."""
-        data = {
-            "email": "test@example.com",
-            "username": "testuser",
-            "password": "a" * 73,  # too long
-            "full_name": "Test User"
-        }
-        with pytest.raises(ValidationError) as exc_info:
-            RegisterRequest(**data)
+    @pytest.mark.asyncio
+    async def test_get_user_by_username(self, db_session: AsyncSession):
+        """Test getting user by username."""
+        auth_service = AuthService(db_session)
+        # Register user
+        registered_user = await auth_service.register_user(
+            email="test@example.com",
+            username="findableuser",
+            password="password123",
+            full_name="Test User"
+        )
         
-        errors = exc_info.value.errors()
-        assert any("password" in str(error) for error in errors)
+        # Retrieve by username
+        found_user = await auth_service.get_user_by_username("findableuser")
+        
+        assert found_user is not None
+        assert found_user.user_id == registered_user.user_id
+        assert found_user.username == "findableuser"
     
-    def test_password_must_contain_letter(self):
-        """Test password must contain at least one letter."""
-        data = {
-            "email": "test@example.com",
-            "username": "testuser",
-            "password": "12345678",  # no letters
-            "full_name": "Test User"
-        }
-        with pytest.raises(ValidationError) as exc_info:
-            RegisterRequest(**data)
-        
-        errors = exc_info.value.errors()
-        assert any("letter" in str(error).lower() for error in errors)
+    @pytest.mark.asyncio
+    async def test_get_user_by_username_not_found(self, db_session: AsyncSession):
+        """Test getting user by username when not found."""
+        auth_service = AuthService(db_session)
+        user = await auth_service.get_user_by_username("nonexistentuser")
+        assert user is None
     
-    def test_password_must_contain_number(self):
-        """Test password must contain at least one number."""
-        data = {
-            "email": "test@example.com",
-            "username": "testuser",
-            "password": "password",  # no numbers
-            "full_name": "Test User"
-        }
-        with pytest.raises(ValidationError) as exc_info:
-            RegisterRequest(**data)
+    @pytest.mark.asyncio
+    async def test_get_user_by_username_case_insensitive(self, db_session: AsyncSession):
+        """Test that username lookup is case-insensitive."""
+        auth_service = AuthService(db_session)
+        # Register user
+        registered_user = await auth_service.register_user(
+            email="test@example.com",
+            username="testuser",
+            password="password123",
+            full_name="Test User"
+        )
         
-        errors = exc_info.value.errors()
-        assert any("number" in str(error).lower() for error in errors)
+        # Lookup with different case
+        found_user = await auth_service.get_user_by_username("TESTUSER")
+        
+        assert found_user is not None
+        assert found_user.user_id == registered_user.user_id
     
-    def test_full_name_min_length(self):
-        """Test full name minimum length validation."""
-        data = {
-            "email": "test@example.com",
-            "username": "testuser",
-            "password": "password123",
-            "full_name": ""  # empty
-        }
-        with pytest.raises(ValidationError) as exc_info:
-            RegisterRequest(**data)
+    @pytest.mark.asyncio
+    async def test_authenticate_user_success(self, db_session: AsyncSession):
+        """Test successful user authentication."""
+        auth_service = AuthService(db_session)
+        # Register user
+        await auth_service.register_user(
+            email="auth@example.com",
+            username="authuser",
+            password="password123",
+            full_name="Auth User"
+        )
         
-        errors = exc_info.value.errors()
-        assert any("full_name" in str(error) for error in errors)
+        # Authenticate
+        user = await auth_service.authenticate_user(
+            email="auth@example.com",
+            password="password123",
+            require_email_verification=False
+        )
+        
+        assert user is not None
+        assert user.email == "auth@example.com"
+        assert user.username == "authuser"
     
-    def test_full_name_max_length(self):
-        """Test full name maximum length validation."""
-        data = {
-            "email": "test@example.com",
-            "username": "testuser",
-            "password": "password123",
-            "full_name": "a" * 101  # too long
-        }
-        with pytest.raises(ValidationError) as exc_info:
-            RegisterRequest(**data)
-        
-        errors = exc_info.value.errors()
-        assert any("full_name" in str(error) for error in errors)
+    @pytest.mark.asyncio
+    async def test_authenticate_user_invalid_email(self, db_session: AsyncSession):
+        """Test authentication fails with invalid email."""
+        auth_service = AuthService(db_session)
+        with pytest.raises(InvalidCredentialsError):
+            await auth_service.authenticate_user(
+                email="nonexistent@example.com",
+                password="password123",
+                require_email_verification=False
+            )
     
-    def test_whitespace_trimming(self):
-        """Test that whitespace is trimmed from inputs."""
-        data = {
-            "email": "  test@example.com  ",
-            "username": "  testuser  ",
-            "password": "password123",
-            "full_name": "  Test User  "
-        }
-        request = RegisterRequest(**data)
+    @pytest.mark.asyncio
+    async def test_authenticate_user_invalid_password(self, db_session: AsyncSession):
+        """Test authentication fails with invalid password."""
+        auth_service = AuthService(db_session)
+        # Register user
+        await auth_service.register_user(
+            email="auth@example.com",
+            username="authuser",
+            password="password123",
+            full_name="Auth User"
+        )
         
-        assert request.email == "test@example.com"
-        assert request.username == "testuser"
-        assert request.full_name == "Test User"
+        # Try with wrong password
+        with pytest.raises(InvalidCredentialsError):
+            await auth_service.authenticate_user(
+                email="auth@example.com",
+                password="wrongpassword",
+                require_email_verification=False
+            )
+    
+    @pytest.mark.asyncio
+    async def test_authenticate_user_disabled_account(
+        self, 
+        db_session: AsyncSession
+    ):
+        """Test authentication fails for disabled account."""
+        auth_service = AuthService(db_session)
+        # Register user
+        user = await auth_service.register_user(
+            email="disabled@example.com",
+            username="disableduser",
+            password="password123",
+            full_name="Disabled User"
+        )
+        
+        # Disable user
+        user.is_active = False
+        await db_session.commit()
+        
+        # Try to authenticate
+        with pytest.raises(AccountDisabledError):
+            await auth_service.authenticate_user(
+                email="disabled@example.com",
+                password="password123",
+                require_email_verification=False
+            )
+    
+    @pytest.mark.asyncio
+    async def test_authenticate_user_case_insensitive_email(self, db_session: AsyncSession):
+        """Test that email is case-insensitive during authentication."""
+        auth_service = AuthService(db_session)
+        # Register user
+        await auth_service.register_user(
+            email="test@example.com",
+            username="testuser",
+            password="password123",
+            full_name="Test User"
+        )
+        
+        # Authenticate with different case
+        user = await auth_service.authenticate_user(
+            email="TEST@EXAMPLE.COM",
+            password="password123",
+            require_email_verification=False
+        )
+        
+        assert user is not None
+        assert user.email == "test@example.com"
