@@ -3,11 +3,17 @@ Authentication routes for login, logout, and token management.
 """
 import os
 import logging
-from fastapi import APIRouter, Depends, Request, HTTPException, status
+import secrets
+import hashlib
+import base64
+from urllib.parse import urlencode
+from fastapi import APIRouter, Depends, Request, HTTPException, status, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import ValidationError as PydanticValidationError
 
 from pdf_ai_agent.config.database.init_database import get_db_session
+from pdf_ai_agent.config.oauth_config import get_oauth_config
+from pdf_ai_agent.config.app_config import get_app_config
 from pdf_ai_agent.api.schemas.auth_schemas import (
     LoginRequest, 
     LoginResponse, 
@@ -369,10 +375,6 @@ async def oauth_google_authorize(
     - HttpOnly cookies for state and code_verifier storage
     - Redirect URL validation against allowlist
     """
-    from fastapi import Response
-    from pdf_ai_agent.config.oauth_config import get_oauth_config
-    from pdf_ai_agent.config.app_config import get_app_config
-    
     try:
         # Load configurations
         oauth_config = get_oauth_config()

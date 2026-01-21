@@ -40,7 +40,7 @@ class AppConfig(BaseModel):
         try:
             with open(config_path, 'r') as f:
                 config_data = yaml.safe_load(f) or {}
-        except Exception:
+        except (FileNotFoundError, yaml.YAMLError, PermissionError):
             # If error reading file, return default config
             return cls()
         

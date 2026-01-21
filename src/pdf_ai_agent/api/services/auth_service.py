@@ -1,6 +1,10 @@
 """
 Authentication service for user login and credential verification.
 """
+import secrets
+import hashlib
+import base64
+from urllib.parse import urlencode
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
@@ -207,7 +211,6 @@ class AuthService:
         Returns:
             Random state string with 'st_' prefix
         """
-        import secrets
         random_part = secrets.token_urlsafe(32)
         return f"st_{random_part}"
     
@@ -218,10 +221,6 @@ class AuthService:
         Returns:
             Tuple of (code_verifier, code_challenge)
         """
-        import secrets
-        import hashlib
-        import base64
-        
         # Generate code_verifier (43-128 characters)
         code_verifier = secrets.token_urlsafe(64)
         
@@ -254,8 +253,6 @@ class AuthService:
         Returns:
             Complete authorization URL
         """
-        from urllib.parse import urlencode
-        
         params = {
             'client_id': client_id,
             'redirect_uri': redirect_uri,
