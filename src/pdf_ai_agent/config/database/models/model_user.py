@@ -41,6 +41,7 @@ class UserModel(Base, TimestampMixin):
     # 权限标记
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)  # 账户是否激活
     is_superuser: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # 是否为超级管理员
+    email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # 邮箱是否验证
 
     # Relationships - Document ownership
     documents: Mapped[list["DocsModel"]] = relationship(
