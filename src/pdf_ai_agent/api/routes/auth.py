@@ -2,6 +2,7 @@
 Authentication routes for login, logout, and token management.
 """
 import os
+import logging
 from fastapi import APIRouter, Depends, Request, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import ValidationError as PydanticValidationError
@@ -30,6 +31,7 @@ from pdf_ai_agent.api.rate_limiter import rate_limiter
 from pdf_ai_agent.security.token_operations import TokenOperations, get_token_operations
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
+logger = logging.getLogger(__name__)
 
 
 def get_client_ip(request: Request) -> str:
@@ -187,8 +189,6 @@ async def login(
     
     except Exception as e:
         # Log the error with proper logging
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"Login error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -291,6 +291,7 @@ async def register(
     except UsernameTakenError as e:
         # Record failed attempt
         rate_limiter.record_failed_attempt(f"register_ip:{client_ip}")
+        rate_limiter.record_failed_attempt(f"register_email:{email}")
         
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -325,8 +326,6 @@ async def register(
     
     except Exception as e:
         # Log the error with proper logging
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"Registration error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

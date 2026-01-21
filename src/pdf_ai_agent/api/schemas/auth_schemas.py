@@ -93,14 +93,14 @@ class RegisterRequest(BaseModel):
         return v
 
 
+class RegisterData(BaseModel):
+    """Registration data containing user info."""
+    user_id: str = Field(..., description="User ID")
+
+
 class RegisterResponse(BaseModel):
     """User registration success response schema."""
     status: str = Field(default="ok", description="Response status")
     message: str = Field(default="registration successful", description="Response message")
     token: str = Field(..., description="JWT access token")
-    data: "RegisterData"
-
-
-class RegisterData(BaseModel):
-    """Registration data containing user info."""
-    user_id: str = Field(..., description="User ID")
+    data: RegisterData

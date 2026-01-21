@@ -144,6 +144,10 @@ class AuthService:
         password_hash = hash_password(password)
         
         # Create new user
+        # Note: Both UserModel and PasswordCredentialModel maintain email_verified fields
+        # UserModel.email_verified: General account email verification status
+        # PasswordCredentialModel.email_verified: Specific to this email-password credential
+        # They should be kept in sync for email-password auth
         new_user = UserModel(
             username=username,
             email=email,
