@@ -7,11 +7,13 @@ from typing import Optional
 
 from pdf_ai_agent.config.database.models.model_user import UserModel
 from pdf_ai_agent.config.database.models.model_auth import PasswordCredentialModel
-from pdf_ai_agent.security.password_utils import verify_password
+from pdf_ai_agent.security.password_utils import verify_password, hash_password
 from pdf_ai_agent.api.exceptions import (
     InvalidCredentialsError,
     AccountDisabledError,
     EmailNotVerifiedError,
+    EmailTakenError,
+    UsernameTakenError,
 )
 
 
@@ -83,3 +85,87 @@ class AuthService:
             select(UserModel).where(UserModel.email == email)
         )
         return result.scalar_one_or_none()
+    
+    async def get_user_by_username(self, username: str) -> Optional[UserModel]:
+        """
+        Get a user by username.
+        
+        Args:
+            username: Username
+            
+        Returns:
+            UserModel if found, None otherwise
+        """
+        username = username.lower().strip()
+        result = await self.db_session.execute(
+            select(UserModel).where(UserModel.username == username)
+        )
+        return result.scalar_one_or_none()
+    
+    async def register_user(
+        self,
+        email: str,
+        username: str,
+        password: str,
+        full_name: str,
+    ) -> UserModel:
+        """
+        Register a new user with email and password.
+        
+        Args:
+            email: User email address
+            username: Username
+            password: Plain text password
+            full_name: User's full name
+            
+        Returns:
+            UserModel of created user
+            
+        Raises:
+            EmailTakenError: If email is already in use
+            UsernameTakenError: If username is already in use
+        """
+        # Normalize inputs
+        email = email.lower().strip()
+        username = username.lower().strip()
+        full_name = full_name.strip()
+        
+        # Check if email is already registered
+        existing_user = await self.get_user_by_email(email)
+        if existing_user:
+            raise EmailTakenError()
+        
+        # Check if username is already taken
+        existing_username = await self.get_user_by_username(username)
+        if existing_username:
+            raise UsernameTakenError()
+        
+        # Hash the password
+        password_hash = hash_password(password)
+        
+        # Create new user
+        new_user = UserModel(
+            username=username,
+            email=email,
+            full_name=full_name,
+            is_active=True,
+            is_superuser=False,
+            email_verified=False,
+        )
+        self.db_session.add(new_user)
+        await self.db_session.flush()  # Get user_id before creating password credential
+        
+        # Create password credential
+        password_credential = PasswordCredentialModel(
+            user_id=new_user.user_id,
+            email=email,
+            password_hash=password_hash,
+            email_verified=False,
+        )
+        self.db_session.add(password_credential)
+        
+        # Commit transaction
+        await self.db_session.commit()
+        await self.db_session.refresh(new_user)
+        
+        return new_user
