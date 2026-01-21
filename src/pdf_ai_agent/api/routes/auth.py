@@ -2,12 +2,21 @@
 Authentication routes for login, logout, and token management.
 """
 import os
+import logging
 from fastapi import APIRouter, Depends, Request, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import ValidationError as PydanticValidationError
 
 from pdf_ai_agent.config.database.init_database import get_db_session
-from pdf_ai_agent.api.schemas.auth_schemas import LoginRequest, LoginResponse, LoginData, ErrorResponse
+from pdf_ai_agent.api.schemas.auth_schemas import (
+    LoginRequest, 
+    LoginResponse, 
+    LoginData, 
+    ErrorResponse,
+    RegisterRequest,
+    RegisterResponse,
+    RegisterData,
+)
 from pdf_ai_agent.api.services.auth_service import AuthService
 from pdf_ai_agent.api.exceptions import (
     AuthenticationError,
@@ -15,11 +24,14 @@ from pdf_ai_agent.api.exceptions import (
     AccountDisabledError,
     EmailNotVerifiedError,
     RateLimitError,
+    EmailTakenError,
+    UsernameTakenError,
 )
 from pdf_ai_agent.api.rate_limiter import rate_limiter
 from pdf_ai_agent.security.token_operations import TokenOperations, get_token_operations
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
+logger = logging.getLogger(__name__)
 
 
 def get_client_ip(request: Request) -> str:
@@ -177,9 +189,144 @@ async def login(
     
     except Exception as e:
         # Log the error with proper logging
-        import logging
-        logger = logging.getLogger(__name__)
         logger.error(f"Login error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "status": "error",
+                "error_code": "INTERNAL_ERROR",
+                "message": "An internal error occurred",
+            }
+        )
+
+
+@router.post(
+    "/register",
+    response_model=RegisterResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        409: {"model": ErrorResponse, "description": "Email or username already taken"},
+        422: {"model": ErrorResponse, "description": "Validation failed"},
+        429: {"model": ErrorResponse, "description": "Rate limit exceeded"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    }
+)
+async def register(
+    request: Request,
+    register_data: RegisterRequest,
+    auth_service: AuthService = Depends(get_auth_service),
+    token_ops: TokenOperations = Depends(get_token_operations),
+):
+    """
+    User registration endpoint.
+    
+    Creates a new user account with email, username, password, and full name.
+    Returns JWT access token on successful registration.
+    
+    Security measures:
+    - Rate limiting by IP and email
+    - Email and username uniqueness validation
+    - Password strength validation
+    - Input sanitization
+    """
+    client_ip = get_client_ip(request)
+    email = register_data.email.lower().strip()
+    
+    try:
+        # Check rate limiting by IP
+        is_limited, retry_after = rate_limiter.is_rate_limited(f"register_ip:{client_ip}")
+        if is_limited:
+            raise RateLimitError(retry_after=retry_after)
+        
+        # Check rate limiting by email
+        is_limited, retry_after = rate_limiter.is_rate_limited(f"register_email:{email}")
+        if is_limited:
+            raise RateLimitError(retry_after=retry_after)
+        
+        # Register user
+        user = await auth_service.register_user(
+            email=email,
+            username=register_data.username,
+            password=register_data.password,
+            full_name=register_data.full_name,
+        )
+        
+        # Clear rate limit on successful registration
+        rate_limiter.clear_attempts(f"register_ip:{client_ip}")
+        rate_limiter.clear_attempts(f"register_email:{email}")
+        
+        # Generate access token
+        expires_in = int(os.getenv("JWT_EXPIRES_IN", "3600"))
+        access_token = token_ops.generate_access_token(
+            user_id=str(user.user_id),
+            expires_in=expires_in,
+            email=user.email,
+            fullname=user.full_name,
+        )
+        
+        # Build response
+        return RegisterResponse(
+            status="ok",
+            message="registration successful",
+            token=access_token,
+            data=RegisterData(
+                user_id=str(user.user_id),
+            )
+        )
+        
+    except EmailTakenError as e:
+        # Record failed attempt
+        rate_limiter.record_failed_attempt(f"register_ip:{client_ip}")
+        rate_limiter.record_failed_attempt(f"register_email:{email}")
+        
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "status": "error",
+                "error_code": e.error_code,
+                "message": e.message,
+            }
+        )
+    
+    except UsernameTakenError as e:
+        # Record failed attempt
+        rate_limiter.record_failed_attempt(f"register_ip:{client_ip}")
+        rate_limiter.record_failed_attempt(f"register_email:{email}")
+        
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "status": "error",
+                "error_code": e.error_code,
+                "message": e.message,
+            }
+        )
+    
+    except RateLimitError as e:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "status": "error",
+                "error_code": e.error_code,
+                "message": e.message,
+            },
+            headers={"Retry-After": str(e.retry_after)}
+        )
+    
+    except PydanticValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "status": "error",
+                "error_code": "VALIDATION_FAILED",
+                "message": "Validation error",
+                "details": e.errors(),
+            }
+        )
+    
+    except Exception as e:
+        # Log the error with proper logging
+        logger.error(f"Registration error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={

@@ -7,11 +7,13 @@ from typing import Optional
 
 from pdf_ai_agent.config.database.models.model_user import UserModel
 from pdf_ai_agent.config.database.models.model_auth import PasswordCredentialModel
-from pdf_ai_agent.security.password_utils import verify_password
+from pdf_ai_agent.security.password_utils import verify_password, hash_password
 from pdf_ai_agent.api.exceptions import (
     InvalidCredentialsError,
     AccountDisabledError,
     EmailNotVerifiedError,
+    EmailTakenError,
+    UsernameTakenError,
 )
 
 
@@ -45,16 +47,24 @@ class AuthService:
         # Normalize email to lowercase
         email = email.lower().strip()
         
-        # Query user by email
+        # Query password credential by email to get password_hash
         result = await self.db_session.execute(
-            select(UserModel).where(UserModel.email == email)
-            .join(PasswordCredentialModel, UserModel.user_id == PasswordCredentialModel.user_id)
+            select(PasswordCredentialModel).where(PasswordCredentialModel.email == email)
+        )
+        password_credential = result.scalar_one_or_none()
+        
+        # Check if credential exists and password is correct
+        # Use constant-time comparison to prevent timing attacks
+        if password_credential is None or not verify_password(password, password_credential.password_hash):
+            raise InvalidCredentialsError()
+        
+        # Query user by user_id from password credential
+        result = await self.db_session.execute(
+            select(UserModel).where(UserModel.user_id == password_credential.user_id)
         )
         user = result.scalar_one_or_none()
         
-        # Check if user exists and password is correct
-        # Use constant-time comparison to prevent timing attacks
-        if user is None or not verify_password(password, user.password_hash):
+        if user is None:
             raise InvalidCredentialsError()
         
         # Check if account is active
@@ -83,3 +93,91 @@ class AuthService:
             select(UserModel).where(UserModel.email == email)
         )
         return result.scalar_one_or_none()
+    
+    async def get_user_by_username(self, username: str) -> Optional[UserModel]:
+        """
+        Get a user by username.
+        
+        Args:
+            username: Username
+            
+        Returns:
+            UserModel if found, None otherwise
+        """
+        username = username.lower().strip()
+        result = await self.db_session.execute(
+            select(UserModel).where(UserModel.username == username)
+        )
+        return result.scalar_one_or_none()
+    
+    async def register_user(
+        self,
+        email: str,
+        username: str,
+        password: str,
+        full_name: str,
+    ) -> UserModel:
+        """
+        Register a new user with email and password.
+        
+        Args:
+            email: User email address
+            username: Username
+            password: Plain text password
+            full_name: User's full name
+            
+        Returns:
+            UserModel of created user
+            
+        Raises:
+            EmailTakenError: If email is already in use
+            UsernameTakenError: If username is already in use
+        """
+        # Normalize inputs
+        email = email.lower().strip()
+        username = username.lower().strip()
+        full_name = full_name.strip()
+        
+        # Check if email is already registered
+        existing_user = await self.get_user_by_email(email)
+        if existing_user:
+            raise EmailTakenError()
+        
+        # Check if username is already taken
+        existing_username = await self.get_user_by_username(username)
+        if existing_username:
+            raise UsernameTakenError()
+        
+        # Hash the password
+        password_hash = hash_password(password)
+        
+        # Create new user
+        # Note: Both UserModel and PasswordCredentialModel maintain email_verified fields
+        # UserModel.email_verified: General account email verification status
+        # PasswordCredentialModel.email_verified: Specific to this email-password credential
+        # They should be kept in sync for email-password auth
+        new_user = UserModel(
+            username=username,
+            email=email,
+            full_name=full_name,
+            is_active=True,
+            is_superuser=False,
+            email_verified=False,
+        )
+        self.db_session.add(new_user)
+        await self.db_session.flush()  # Get user_id before creating password credential
+        
+        # Create password credential
+        password_credential = PasswordCredentialModel(
+            user_id=new_user.user_id,
+            email=email,
+            password_hash=password_hash,
+            email_verified=False,
+        )
+        self.db_session.add(password_credential)
+        
+        # Commit transaction
+        await self.db_session.commit()
+        await self.db_session.refresh(new_user)
+        
+        return new_user

@@ -1,10 +1,14 @@
 """
-Password hashing and verification utilities using bcrypt.
+Password hashing and verification utilities using argon2.
 """
 from passlib.context import CryptContext
 
-# Configure bcrypt context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Configure password hashing context using argon2id (more secure and modern than bcrypt)
+# argon2id is resistant to side-channel attacks and has no password length limit
+pwd_context = CryptContext(
+    schemes=["argon2"],
+    deprecated="auto",
+)
 
 
 def hash_password(password: str) -> str:

@@ -1,8 +1,9 @@
 """
 Authentication request and response schemas.
 """
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
 from typing import Optional
+import re
 
 
 class LoginRequest(BaseModel):
@@ -39,3 +40,67 @@ class ErrorResponse(BaseModel):
     error_code: str = Field(..., description="Error code")
     message: str = Field(..., description="Error message")
     details: Optional[dict] = Field(None, description="Additional error details")
+
+
+class RegisterRequest(BaseModel):
+    """User registration request schema."""
+    model_config = ConfigDict(
+        str_strip_whitespace=True,
+    )
+    
+    email: EmailStr = Field(
+        ...,
+        description="User email address",
+        max_length=254,
+    )
+    username: str = Field(
+        ...,
+        description="Username (3-30 characters, alphanumeric, underscore, dot)",
+        min_length=3,
+        max_length=30,
+    )
+    password: str = Field(
+        ...,
+        description="Password (8-72 characters, at least 1 letter and 1 number)",
+        min_length=8,
+        max_length=72,
+    )
+    full_name: str = Field(
+        ...,
+        description="Full name",
+        min_length=1,
+        max_length=100,
+    )
+    
+    @field_validator('username')
+    @classmethod
+    def validate_username(cls, v: str) -> str:
+        """Validate username format."""
+        # Allow only alphanumeric characters, underscore, and dot
+        if not re.match(r'^[a-zA-Z0-9_.]+$', v):
+            raise ValueError('Username can only contain letters, numbers, underscore, and dot')
+        return v.lower()  # Store as lowercase for uniqueness check
+    
+    @field_validator('password')
+    @classmethod
+    def validate_password_strength(cls, v: str) -> str:
+        """Validate password strength."""
+        # Check for at least one letter and one number
+        if not re.search(r'[a-zA-Z]', v):
+            raise ValueError('Password must contain at least one letter')
+        if not re.search(r'\d', v):
+            raise ValueError('Password must contain at least one number')
+        return v
+
+
+class RegisterData(BaseModel):
+    """Registration data containing user info."""
+    user_id: str = Field(..., description="User ID")
+
+
+class RegisterResponse(BaseModel):
+    """User registration success response schema."""
+    status: str = Field(default="ok", description="Response status")
+    message: str = Field(default="registration successful", description="Response message")
+    token: str = Field(..., description="JWT access token")
+    data: RegisterData

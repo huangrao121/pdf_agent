@@ -41,3 +41,15 @@ class ValidationError(AuthenticationError):
     def __init__(self, message: str, details: dict = None):
         super().__init__(message, "VALIDATION_FAILED")
         self.details = details
+
+
+class EmailTakenError(AuthenticationError):
+    """Exception raised when email is already in use."""
+    def __init__(self, message: str = "Email is already in use."):
+        super().__init__(message, "EMAIL_TAKEN")
+
+
+class UsernameTakenError(AuthenticationError):
+    """Exception raised when username is already in use."""
+    def __init__(self, message: str = "Username is already in use."):
+        super().__init__(message, "USERNAME_TAKEN")
