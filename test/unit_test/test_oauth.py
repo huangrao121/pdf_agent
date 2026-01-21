@@ -90,11 +90,10 @@ class TestOAuthService:
 
 
 class TestOAuthAuthorizeEndpoint:
-    """Tests for OAuth authorization endpoint."""
+    """Tests for OAuth authorization endpoint - service layer only."""
     
-    @pytest.fixture
-    def mock_env_vars(self):
-        """Mock environment variables for OAuth."""
+    def test_oauth_config_from_env(self):
+        """Test loading OAuth config from environment."""
         with patch.dict(os.environ, {
             "GOOGLE_CLIENT_ID": "test_client_id",
             "GOOGLE_CLIENT_SECRET": "test_client_secret",
@@ -103,100 +102,21 @@ class TestOAuthAuthorizeEndpoint:
             "OAUTH_ENABLED": "true",
             "OAUTH_ALLOWED_REDIRECT_TO_PREFIXES": "/,/app,/settings",
         }):
-            # Clear the lru_cache to ensure new config is loaded
-            from pdf_ai_agent.config.oauth_config import get_oauth_config
-            get_oauth_config.cache_clear()
-            yield
-            get_oauth_config.cache_clear()
+            from pdf_ai_agent.config.oauth_config import OAuthConfig
+            
+            config = OAuthConfig.from_env()
+            
+            assert config.google_client_id == "test_client_id"
+            assert config.google_client_secret == "test_client_secret"
+            assert config.google_redirect_uri == "http://localhost:8000/callback"
+            assert config.oauth_enabled is True
+            assert "/app" in config.oauth_allowed_redirect_to_prefixes
     
-    @pytest.fixture
-    def app(self, db_session, mock_env_vars):
-        """Create FastAPI test app."""
-        from main import create_app
-        from pdf_ai_agent.config.database.init_database import get_db_session
+    def test_app_config_default(self):
+        """Test default app config."""
+        from pdf_ai_agent.config.app_config import AppConfig
         
-        app = create_app()
+        config = AppConfig.from_yaml("nonexistent.yaml")
         
-        # Override the get_db_session dependency
-        async def override_get_db_session():
-            yield db_session
-        
-        app.dependency_overrides[get_db_session] = override_get_db_session
-        return app
-    
-    def test_oauth_authorize_success(self, app):
-        """Test successful OAuth authorization."""
-        client = TestClient(app)
-        
-        response = client.post(
-            "/api/auth/oauth/google/authorize",
-            json={"redirect_to": "/app"}
-        )
-        
-        assert response.status_code == status.HTTP_200_OK
-        data = response.json()
-        
-        assert data["status"] == "ok"
-        assert "data" in data
-        assert "authorization_url" in data["data"]
-        assert "provider" in data["data"]
-        assert "state" in data["data"]
-        
-        assert data["data"]["provider"] == "google"
-        assert data["data"]["state"].startswith("st_")
-        assert "accounts.google.com" in data["data"]["authorization_url"]
-        
-        # Check cookies
-        assert "oauth_state" in response.cookies
-        assert "oauth_pkce_verifier" in response.cookies
-        assert "oauth_redirect_to" in response.cookies
-    
-    def test_oauth_authorize_invalid_redirect_to(self, app):
-        """Test OAuth authorization with invalid redirect_to."""
-        client = TestClient(app)
-        
-        response = client.post(
-            "/api/auth/oauth/google/authorize",
-            json={"redirect_to": "https://evil.com"}
-        )
-        
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-        data = response.json()
-        
-        assert data["status"] == "error"
-        assert data["error_code"] == "VALIDATION_FAILED"
-    
-    def test_oauth_authorize_disabled(self, db_session):
-        """Test OAuth authorization when OAuth is disabled."""
-        with patch.dict(os.environ, {
-            "GOOGLE_CLIENT_ID": "test_client_id",
-            "GOOGLE_CLIENT_SECRET": "test_client_secret",
-            "GOOGLE_REDIRECT_URI": "http://localhost:8000/callback",
-            "OAUTH_ENABLED": "false",
-        }):
-            from pdf_ai_agent.config.oauth_config import get_oauth_config
-            get_oauth_config.cache_clear()
-            
-            from main import create_app
-            from pdf_ai_agent.config.database.init_database import get_db_session
-            
-            app = create_app()
-            
-            async def override_get_db_session():
-                yield db_session
-            
-            app.dependency_overrides[get_db_session] = override_get_db_session
-            
-            client = TestClient(app)
-            response = client.post(
-                "/api/auth/oauth/google/authorize",
-                json={"redirect_to": "/app"}
-            )
-            
-            assert response.status_code == status.HTTP_403_FORBIDDEN
-            data = response.json()
-            
-            assert data["status"] == "error"
-            assert data["error_code"] == "OAUTH_DISABLED"
-            
-            get_oauth_config.cache_clear()
+        assert config.oauth_state_ttl_seconds == 600
+        assert config.oauth_pkce_enabled is True

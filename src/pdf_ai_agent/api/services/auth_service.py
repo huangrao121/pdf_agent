@@ -193,6 +193,10 @@ class AuthService:
         Returns:
             True if valid, False otherwise
         """
+        # Reject URLs with protocol (http://, https://, //, etc.)
+        if "://" in redirect_to or redirect_to.startswith("//"):
+            return False
+        
         # Check if redirect_to starts with any allowed prefix
         return any(redirect_to.startswith(prefix) for prefix in allowed_prefixes)
     
