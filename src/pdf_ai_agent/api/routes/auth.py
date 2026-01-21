@@ -17,40 +17,9 @@ from pdf_ai_agent.api.exceptions import (
     RateLimitError,
 )
 from pdf_ai_agent.api.rate_limiter import rate_limiter
-from pdf_ai_agent.security.token_operations import TokenOperations
-from pdf_ai_agent.security.key_manager import KeyManager
+from pdf_ai_agent.security.token_operations import TokenOperations, get_token_operations
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
-
-
-def get_token_operations() -> TokenOperations:
-    """
-    Get token operations instance with configuration from environment.
-    """
-    # Load key configuration from environment
-    private_key = os.getenv("JWT_PRIVATE_KEY", "")
-    active_kid = os.getenv("JWT_ACTIVE_KID", "default-key")
-    public_key = os.getenv("JWT_PUBLIC_KEY", "")
-    issuer = os.getenv("JWT_ISSUER", "pdf-ai-agent")
-    audience = os.getenv("JWT_AUDIENCE", "pdf-ai-agent-api")
-    
-    # Create keyset
-    keyset = {active_kid: public_key} if public_key else {}
-    
-    # Initialize key manager
-    key_manager = KeyManager(
-        active_kid=active_kid,
-        private_key_pem=private_key,
-        keyset=keyset
-    )
-    
-    # Initialize token operations
-    return TokenOperations(
-        key_manager=key_manager,
-        issuer=issuer,
-        audience=audience,
-        leeway=0
-    )
 
 
 def get_client_ip(request: Request) -> str:
@@ -65,6 +34,11 @@ def get_client_ip(request: Request) -> str:
     # Fall back to direct client IP
     return request.client.host if request.client else "unknown"
 
+def get_auth_service(session: AsyncSession = Depends(get_db_session)) -> AuthService:
+    """
+    Get AuthService instance.
+    """
+    return AuthService(db_session=session)
 
 @router.post(
     "/login",
@@ -81,7 +55,7 @@ def get_client_ip(request: Request) -> str:
 async def login(
     request: Request,
     login_data: LoginRequest,
-    db: AsyncSession = Depends(get_db_session),
+    auth_service: AuthService = Depends(get_auth_service),
     token_ops: TokenOperations = Depends(get_token_operations),
 ):
     """
@@ -111,8 +85,7 @@ async def login(
             raise RateLimitError(retry_after=retry_after)
         
         # Authenticate user
-        user = await AuthService.authenticate_user(
-            db=db,
+        user = await auth_service.authenticate_user(
             email=email,
             password=login_data.password,
             require_email_verification=False  # Set to True if email verification is required

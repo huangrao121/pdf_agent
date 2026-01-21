@@ -24,8 +24,9 @@ from pdf_ai_agent.security.exceptions import (
 from pdf_ai_agent.security.key_manager import KeyManager
 from pdf_ai_agent.security.token_operations import TokenOperations
 
+import json
 
-def generate_test_keys():
+def generate_pair_keys():
     """Generate test ECDSA keys for demonstration."""
     # Generate private key
     private_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
@@ -46,7 +47,7 @@ def generate_test_keys():
     return private_pem, public_pem
 
 
-def main():
+def test_main():
     """Demonstrate JWT authentication usage."""
     print("=" * 60)
     print("JWT Authentication Example with ES256")
@@ -54,7 +55,7 @@ def main():
     
     # 1. Generate test keys
     print("\n1. Generating test keys...")
-    private_key_pem, public_key_pem = generate_test_keys()
+    private_key_pem, public_key_pem = generate_pair_keys()
     print("✓ Keys generated successfully")
     
     # 2. Set up key manager
@@ -140,6 +141,36 @@ def main():
     print("Example completed successfully!")
     print("=" * 60)
 
+def main():
+    private_key, public_key = generate_pair_keys()
+
+    _, old_public_key = generate_pair_keys()
+    keyset = {
+        "key-2025-12": old_public_key,
+        "key-2026-01": public_key,
+    }
+
+    env_content = f"""# JWT 配置 - 生成于 {datetime.now().isoformat()}
+    JWT_ACTIVE_KID=key-2026-01
+    JWT_PRIVATE_KEY={private_key.replace(chr(10), '\\n')}
+    KEYSET={json.dumps(keyset).replace(chr(10), '\\n')}
+    """
+    env_file = ".env.dev"
+        # 写入 .env 文件
+    with open(env_file, 'a') as f:
+        f.write(env_content)
+    
+    print("✅ 密钥生成成功！")
+    print(f"📁 已写入 .env 文件")
+    print(f"\n当前密钥 ID: key-2024-01")
+    print(f"Keyset 包含 {len(keyset)} 个公钥")
+    
+    # 显示内容（不显示完整的私钥）
+    print(f"\n私钥前 50 字符: {private_key[:50]}...")
+    print(f"\nKeyset:")
+    for kid in keyset:
+        pub = keyset[kid][:50] + "..."
+        print(f"  {kid}: {pub}")
 
 if __name__ == "__main__":
     main()

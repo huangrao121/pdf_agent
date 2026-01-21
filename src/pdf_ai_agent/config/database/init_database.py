@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from functools import lru_cache
 
-from pdf_ai_agent.config.database.models.model_base import Base
+# 导入 Base 和所有模型（确保 Base.metadata 能收集到所有表定义）
+from pdf_ai_agent.config.database.models import Base
 
-Base = Base()
 
 class DatabaseConfig(BaseSettings):
     """
@@ -29,7 +29,7 @@ class DatabaseConfig(BaseSettings):
 
 @lru_cache()
 def get_database_config() -> DatabaseConfig:
-    return DatabaseConfig(_env_file=".env.local")
+    return DatabaseConfig(_env_file=".env.dev")
 
 async def init_database(config: DatabaseConfig):
     """

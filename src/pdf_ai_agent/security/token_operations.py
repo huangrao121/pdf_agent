@@ -4,6 +4,7 @@ JWT token operations for generation, verification, and decoding.
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Any
 import jwt
+from functools import lru_cache
 
 from .exceptions import (
     TokenExpiredError,
@@ -203,3 +204,23 @@ class TokenOperations:
             return payload
         except jwt.DecodeError as e:
             raise MalformedTokenError("Token is malformed") from e
+
+
+@lru_cache()
+def get_token_operations() -> TokenOperations:
+    """
+    Get a cached TokenOperations instance loaded from environment variables.
+    """
+    from pdf_ai_agent.security.key_manager import get_key_manager
+    
+    key_manager = get_key_manager()
+    
+    issuer = key_manager.issuer
+    audience = key_manager.audience
+    
+    return TokenOperations(
+        key_manager=key_manager,
+        issuer=issuer,
+        audience=audience,
+        leeway=0
+    )

@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(".env.dev")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
