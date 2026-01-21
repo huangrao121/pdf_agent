@@ -11,3 +11,4 @@ wheels/
 
 .env.dev
 .env.*
+!.env.dev.sample
