@@ -54,7 +54,7 @@ class DocsModel(Base, TimestampMixin):
     storage_uri: Mapped[str] = mapped_column(Text, nullable=False)  # 对象存储路径 (e.g., s3://bucket/path)
     file_type: Mapped[str] = mapped_column(String(50), nullable=False)  # MIME 类型 (e.g., application/pdf)
     file_size: Mapped[int] = mapped_column(BigInteger, nullable=False)  # 文件大小（字节）
-    file_sha256: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)  # 文件内容哈希，用于去重
+    file_sha256: Mapped[str] = mapped_column(String(64), nullable=False)  # 文件内容哈希，用于去重
 
     # 文档元数据（从 PDF 提取或用户填写）
     title: Mapped[str] = mapped_column(String(255), nullable=True)  # 文档标题
@@ -235,7 +235,7 @@ class AnchorModel(Base, TimestampMixin):
     anchor_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     
     # 外键 - 三方关联
-    note_id: Mapped[int] = mapped_column(Integer, ForeignKey('doc_note.note_id'), nullable=False, index=True)
+    note_id: Mapped[int] = mapped_column(Integer, ForeignKey('doc_note.note_id'), nullable=True, index=True)
     doc_id: Mapped[int] = mapped_column(Integer, ForeignKey('doc.doc_id'), nullable=False, index=True)
     chunk_id: Mapped[int] = mapped_column(Integer, ForeignKey('doc_chunk.chunk_id'), nullable=False, index=True)
 
