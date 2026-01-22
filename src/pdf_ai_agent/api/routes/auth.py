@@ -3,11 +3,17 @@ Authentication routes for login, logout, and token management.
 """
 import os
 import logging
-from fastapi import APIRouter, Depends, Request, HTTPException, status
+import secrets
+import hashlib
+import base64
+from urllib.parse import urlencode
+from fastapi import APIRouter, Depends, Request, HTTPException, status, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import ValidationError as PydanticValidationError
 
 from pdf_ai_agent.config.database.init_database import get_db_session
+from pdf_ai_agent.config.oauth_config import get_oauth_config
+from pdf_ai_agent.config.app_config import get_app_config
 from pdf_ai_agent.api.schemas.auth_schemas import (
     LoginRequest, 
     LoginResponse, 
@@ -16,6 +22,9 @@ from pdf_ai_agent.api.schemas.auth_schemas import (
     RegisterRequest,
     RegisterResponse,
     RegisterData,
+    OAuthAuthorizeRequest,
+    OAuthAuthorizeResponse,
+    OAuthAuthorizeData,
 )
 from pdf_ai_agent.api.services.auth_service import AuthService
 from pdf_ai_agent.api.exceptions import (
@@ -26,6 +35,8 @@ from pdf_ai_agent.api.exceptions import (
     RateLimitError,
     EmailTakenError,
     UsernameTakenError,
+    OAuthDisabledError,
+    InvalidRedirectError,
 )
 from pdf_ai_agent.api.rate_limiter import rate_limiter
 from pdf_ai_agent.security.token_operations import TokenOperations, get_token_operations
@@ -327,6 +338,165 @@ async def register(
     except Exception as e:
         # Log the error with proper logging
         logger.error(f"Registration error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "status": "error",
+                "error_code": "INTERNAL_ERROR",
+                "message": "An internal error occurred",
+            }
+        )
+
+
+@router.post(
+    "/oauth/google/authorize",
+    response_model=OAuthAuthorizeResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        422: {"model": ErrorResponse, "description": "Validation failed"},
+        403: {"model": ErrorResponse, "description": "OAuth disabled"},
+        500: {"model": ErrorResponse, "description": "Internal server error"},
+    }
+)
+async def oauth_google_authorize(
+    request: Request,
+    oauth_data: OAuthAuthorizeRequest,
+    auth_service: AuthService = Depends(get_auth_service),
+):
+    """
+    Generate Google OAuth authorization URL.
+    
+    Creates an authorization URL with PKCE support and stores state/verifier
+    in HttpOnly cookies for security.
+    
+    Security measures:
+    - State parameter to prevent CSRF attacks
+    - PKCE to prevent authorization code interception
+    - HttpOnly cookies for state and code_verifier storage
+    - Redirect URL validation against allowlist
+    """
+    try:
+        # Load configurations
+        oauth_config = get_oauth_config()
+        app_config = get_app_config()
+        
+        # Check if OAuth is enabled
+        if not oauth_config.oauth_enabled:
+            raise OAuthDisabledError()
+        
+        # Validate redirect_to parameter
+        if not auth_service.validate_redirect_to(
+            oauth_data.redirect_to,
+            oauth_config.oauth_allowed_redirect_to_prefixes
+        ):
+            raise InvalidRedirectError(
+                f"redirect_to must start with one of: {', '.join(oauth_config.oauth_allowed_redirect_to_prefixes)}"
+            )
+        
+        # Generate state
+        state = auth_service.generate_state()
+        
+        # Generate PKCE pair if enabled
+        code_challenge = None
+        code_verifier = None
+        if app_config.oauth_pkce_enabled:
+            code_verifier, code_challenge = auth_service.generate_pkce_pair()
+        
+        # Build authorization URL
+        authorization_url = auth_service.build_authorization_url(
+            client_id=oauth_config.google_client_id,
+            redirect_uri=oauth_config.google_redirect_uri,
+            scope=oauth_config.google_scopes,
+            state=state,
+            auth_endpoint=oauth_config.google_auth_endpoint,
+            code_challenge=code_challenge,
+        )
+        
+        # Build response
+        response = OAuthAuthorizeResponse(
+            status="ok",
+            data=OAuthAuthorizeData(
+                authorization_url=authorization_url,
+                provider="google",
+                state=state,
+            )
+        )
+        
+        # Create FastAPI Response to set cookies
+        fastapi_response = Response(
+            content=response.model_dump_json(),
+            media_type="application/json",
+            status_code=status.HTTP_200_OK,
+        )
+        
+        # Set HttpOnly cookies for state and code_verifier
+        max_age = app_config.oauth_state_ttl_seconds
+        
+        fastapi_response.set_cookie(
+            key="oauth_state",
+            value=state,
+            httponly=True,
+            secure=True,  # Only send over HTTPS
+            samesite="lax",  # CSRF protection
+            max_age=max_age,
+        )
+        
+        if code_verifier:
+            fastapi_response.set_cookie(
+                key="oauth_pkce_verifier",
+                value=code_verifier,
+                httponly=True,
+                secure=True,
+                samesite="lax",
+                max_age=max_age,
+            )
+        
+        # Store redirect_to in cookie as well
+        fastapi_response.set_cookie(
+            key="oauth_redirect_to",
+            value=oauth_data.redirect_to,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=max_age,
+        )
+        
+        return fastapi_response
+        
+    except OAuthDisabledError as e:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "status": "error",
+                "error_code": e.error_code,
+                "message": e.message,
+            }
+        )
+    
+    except InvalidRedirectError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "status": "error",
+                "error_code": e.error_code,
+                "message": e.message,
+            }
+        )
+    
+    except PydanticValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "status": "error",
+                "error_code": "VALIDATION_FAILED",
+                "message": "Validation error",
+                "details": e.errors(),
+            }
+        )
+    
+    except Exception as e:
+        # Log the error with proper logging
+        logger.error(f"OAuth authorization error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={

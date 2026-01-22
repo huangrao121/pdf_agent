@@ -1,6 +1,10 @@
 """
 Authentication service for user login and credential verification.
 """
+import secrets
+import hashlib
+import base64
+from urllib.parse import urlencode
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
@@ -181,3 +185,85 @@ class AuthService:
         await self.db_session.refresh(new_user)
         
         return new_user
+    
+    def validate_redirect_to(self, redirect_to: str, allowed_prefixes: list) -> bool:
+        """
+        Validate redirect_to parameter against allowlist.
+        
+        Args:
+            redirect_to: The redirect path to validate
+            allowed_prefixes: List of allowed path prefixes
+            
+        Returns:
+            True if valid, False otherwise
+        """
+        # Reject URLs with protocol (http://, https://, //, etc.)
+        if "://" in redirect_to or redirect_to.startswith("//"):
+            return False
+        
+        # Check if redirect_to starts with any allowed prefix
+        return any(redirect_to.startswith(prefix) for prefix in allowed_prefixes)
+    
+    def generate_state(self) -> str:
+        """
+        Generate a random state parameter for OAuth.
+        
+        Returns:
+            Random state string with 'st_' prefix
+        """
+        random_part = secrets.token_urlsafe(32)
+        return f"st_{random_part}"
+    
+    def generate_pkce_pair(self) -> tuple:
+        """
+        Generate PKCE code_verifier and code_challenge.
+        
+        Returns:
+            Tuple of (code_verifier, code_challenge)
+        """
+        # Generate code_verifier (43-128 characters)
+        code_verifier = secrets.token_urlsafe(64)
+        
+        # Generate code_challenge using S256 method
+        code_challenge_bytes = hashlib.sha256(code_verifier.encode('utf-8')).digest()
+        code_challenge = base64.urlsafe_b64encode(code_challenge_bytes).decode('utf-8').rstrip('=')
+        
+        return code_verifier, code_challenge
+    
+    def build_authorization_url(
+        self,
+        client_id: str,
+        redirect_uri: str,
+        scope: str,
+        state: str,
+        auth_endpoint: str,
+        code_challenge: str = None,
+    ) -> str:
+        """
+        Build Google OAuth authorization URL.
+        
+        Args:
+            client_id: Google OAuth client ID
+            redirect_uri: Redirect URI
+            scope: OAuth scopes
+            state: State parameter
+            auth_endpoint: Authorization endpoint URL
+            code_challenge: Optional PKCE code challenge
+            
+        Returns:
+            Complete authorization URL
+        """
+        params = {
+            'client_id': client_id,
+            'redirect_uri': redirect_uri,
+            'response_type': 'code',
+            'scope': scope,
+            'state': state,
+        }
+        
+        if code_challenge:
+            params['code_challenge'] = code_challenge
+            params['code_challenge_method'] = 'S256'
+        
+        query_string = urlencode(params)
+        return f"{auth_endpoint}?{query_string}"

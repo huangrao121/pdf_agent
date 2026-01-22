@@ -53,3 +53,15 @@ class UsernameTakenError(AuthenticationError):
     """Exception raised when username is already in use."""
     def __init__(self, message: str = "Username is already in use."):
         super().__init__(message, "USERNAME_TAKEN")
+
+
+class OAuthDisabledError(AuthenticationError):
+    """Exception raised when OAuth is disabled."""
+    def __init__(self, message: str = "OAuth is disabled."):
+        super().__init__(message, "OAUTH_DISABLED")
+
+
+class InvalidRedirectError(AuthenticationError):
+    """Exception raised when redirect_to is invalid."""
+    def __init__(self, message: str = "Invalid redirect_to parameter."):
+        super().__init__(message, "VALIDATION_FAILED")

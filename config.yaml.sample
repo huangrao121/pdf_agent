@@ -1,0 +1,6 @@
+# Application configuration
+# Copy this file to config.yaml and adjust values as needed
+
+# OAuth Settings
+OAUTH_STATE_TTL_SECONDS: 600  # 10 minutes
+OAUTH_PKCE_ENABLED: true
