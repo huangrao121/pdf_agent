@@ -6,6 +6,7 @@ import hashlib
 import base64
 import json
 import logging
+import time
 from urllib.parse import urlencode
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -376,7 +377,6 @@ class AuthService:
                 raise InvalidIdTokenError("Invalid issuer")
             
             # Check expiration (exp is Unix timestamp)
-            import time
             if payload.get('exp', 0) < time.time():
                 raise InvalidIdTokenError("Token expired")
             
@@ -436,7 +436,8 @@ class AuthService:
             user = result.scalar_one_or_none()
             
             if not user:
-                raise Exception("OAuth identity exists but user not found")
+                logger.error(f"OAuth identity exists but user not found for identity ID {oauth_identity.oauth_identity_id}")
+                raise InvalidCredentialsError("User account not found")
             
             # Update user info if changed
             if provider_name and user.full_name != provider_name:

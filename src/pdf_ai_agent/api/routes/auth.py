@@ -558,7 +558,7 @@ async def oauth_google_callback(
         oauth_config = get_oauth_config()
         app_config = get_app_config()
         
-        # Get frontend base URL from environment
+        # Get frontend base URL from environment (defined early for error handlers)
         frontend_base_url = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")
         
         # Check if OAuth is enabled
@@ -674,7 +674,8 @@ async def oauth_google_callback(
     except InvalidOAuthStateError as e:
         logger.warning(f"Invalid OAuth state: {e.message}")
         # Redirect to frontend with error
-        redirect_url = f"{frontend_base_url}/login?error=invalid_state"
+        frontend_url = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")
+        redirect_url = f"{frontend_url}/login?error=invalid_state"
         response = RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
         # Clear OAuth cookies
         response.delete_cookie("oauth_state")
@@ -685,8 +686,9 @@ async def oauth_google_callback(
     except (OAuthProviderError, InvalidIdTokenError) as e:
         logger.error(f"OAuth error: {e.message}", exc_info=True)
         # Redirect to frontend with error
+        frontend_url = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")
         error_code = e.error_code.lower()
-        redirect_url = f"{frontend_base_url}/login?error={error_code}"
+        redirect_url = f"{frontend_url}/login?error={error_code}"
         response = RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
         # Clear OAuth cookies
         response.delete_cookie("oauth_state")
@@ -696,18 +698,24 @@ async def oauth_google_callback(
     
     except OAuthDisabledError as e:
         logger.warning("OAuth is disabled")
-        redirect_url = f"{frontend_base_url}/login?error=oauth_disabled"
+        # frontend_base_url might not be defined if exception occurs early
+        frontend_url = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")
+        redirect_url = f"{frontend_url}/login?error=oauth_disabled"
         response = RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
         return response
     
     except Exception as e:
         # Log the error with proper logging
         logger.error(f"OAuth callback error: {e}", exc_info=True)
-        # Redirect to frontend with error
-        redirect_url = f"{frontend_base_url}/login?error=internal_error"
+        # frontend_base_url might not be defined if exception occurs early
+        frontend_url = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")
+        redirect_url = f"{frontend_url}/login?error=internal_error"
         response = RedirectResponse(url=redirect_url, status_code=status.HTTP_302_FOUND)
-        # Clear OAuth cookies
-        response.delete_cookie("oauth_state")
-        response.delete_cookie("oauth_redirect_to")
-        response.delete_cookie("oauth_pkce_verifier")
+        # Try to clear OAuth cookies if possible
+        try:
+            response.delete_cookie("oauth_state")
+            response.delete_cookie("oauth_redirect_to")
+            response.delete_cookie("oauth_pkce_verifier")
+        except Exception:
+            pass  # Ignore cookie deletion errors
         return response
