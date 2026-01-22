@@ -18,10 +18,13 @@ The application supports Google OAuth 2.0 for user authentication:
    - `GOOGLE_CLIENT_SECRET`: Your Google OAuth client secret
    - `GOOGLE_REDIRECT_URI`: OAuth callback URL
    - `OAUTH_ALLOWED_REDIRECT_TO_PREFIXES`: Allowed redirect paths
+   - `FRONTEND_BASE_URL`: Frontend base URL for redirects
 
 2. Copy `config.yaml.sample` to `config.yaml` for PKCE and TTL settings
 
-### OAuth Endpoint
+### OAuth Endpoints
+
+#### 1. Authorization Endpoint
 
 **POST** `/api/auth/oauth/google/authorize`
 
@@ -43,6 +46,28 @@ Response:
   }
 }
 ```
+
+#### 2. Callback Endpoint
+
+**GET** `/api/auth/oauth/google/callback`
+
+Query Parameters:
+- `code` (string, required): Authorization code from Google
+- `state` (string, required): State parameter for CSRF protection
+- `error` (string, optional): Error code if authorization failed
+- `error_description` (string, optional): Error description
+
+Response:
+- `302 Redirect` to frontend with access token in HttpOnly cookie
+- On success: Redirects to `FRONTEND_BASE_URL + redirect_to`
+- On error: Redirects to `FRONTEND_BASE_URL/login?error=<error_code>`
+
+Security Features:
+- State parameter validation (CSRF protection)
+- PKCE code verifier validation
+- ID token verification (audience, issuer, expiration)
+- HttpOnly cookie for token storage
+- Automatic user creation or linking based on email
 
 ## Security Module
 

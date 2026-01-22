@@ -120,3 +120,309 @@ class TestOAuthAuthorizeEndpoint:
         
         assert config.oauth_state_ttl_seconds == 600
         assert config.oauth_pkce_enabled is True
+
+
+class TestOAuthCallbackService:
+    """Tests for OAuth callback service methods."""
+    
+    @pytest.mark.asyncio
+    async def test_exchange_code_for_tokens_success(self, db_session):
+        """Test successful token exchange."""
+        service = AuthService(db_session=db_session)
+        
+        # Mock httpx response
+        mock_response_data = {
+            "access_token": "mock_access_token",
+            "id_token": "mock_id_token",
+            "expires_in": 3600,
+            "token_type": "Bearer",
+        }
+        
+        with patch("httpx.AsyncClient.post") as mock_post:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = mock_response_data
+            mock_post.return_value = mock_response
+            
+            result = await service.exchange_code_for_tokens(
+                code="test_code",
+                client_id="test_client_id",
+                client_secret="test_secret",
+                redirect_uri="http://localhost:8000/callback",
+                token_endpoint="https://oauth2.googleapis.com/token",
+            )
+            
+            assert result["access_token"] == "mock_access_token"
+            assert result["id_token"] == "mock_id_token"
+    
+    @pytest.mark.asyncio
+    async def test_exchange_code_for_tokens_with_pkce(self, db_session):
+        """Test token exchange with PKCE verifier."""
+        service = AuthService(db_session=db_session)
+        
+        mock_response_data = {
+            "access_token": "mock_access_token",
+            "id_token": "mock_id_token",
+        }
+        
+        with patch("httpx.AsyncClient.post") as mock_post:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = mock_response_data
+            mock_post.return_value = mock_response
+            
+            await service.exchange_code_for_tokens(
+                code="test_code",
+                client_id="test_client_id",
+                client_secret="test_secret",
+                redirect_uri="http://localhost:8000/callback",
+                token_endpoint="https://oauth2.googleapis.com/token",
+                code_verifier="test_verifier",
+            )
+            
+            # Verify PKCE verifier was included in request
+            call_kwargs = mock_post.call_args[1]
+            assert "code_verifier" in call_kwargs["data"]
+    
+    @pytest.mark.asyncio
+    async def test_exchange_code_for_tokens_error(self, db_session):
+        """Test token exchange with error response."""
+        service = AuthService(db_session=db_session)
+        
+        with patch("httpx.AsyncClient.post") as mock_post:
+            mock_response = MagicMock()
+            mock_response.status_code = 400
+            mock_response.headers.get.return_value = "application/json"
+            mock_response.json.return_value = {
+                "error": "invalid_grant",
+                "error_description": "Invalid authorization code"
+            }
+            mock_post.return_value = mock_response
+            
+            from pdf_ai_agent.api.exceptions import OAuthProviderError
+            
+            with pytest.raises(OAuthProviderError):
+                await service.exchange_code_for_tokens(
+                    code="invalid_code",
+                    client_id="test_client_id",
+                    client_secret="test_secret",
+                    redirect_uri="http://localhost:8000/callback",
+                    token_endpoint="https://oauth2.googleapis.com/token",
+                )
+    
+    def test_verify_id_token_success(self, db_session):
+        """Test ID token verification with valid token."""
+        service = AuthService(db_session=db_session)
+        
+        # Create a mock ID token (simplified - only payload)
+        import json
+        import base64
+        import time
+        
+        payload = {
+            "sub": "12345",
+            "email": "test@example.com",
+            "email_verified": True,
+            "name": "Test User",
+            "picture": "https://example.com/photo.jpg",
+            "aud": "test_client_id",
+            "iss": "https://accounts.google.com",
+            "exp": int(time.time()) + 3600,
+        }
+        
+        # Create fake JWT (header.payload.signature)
+        header = base64.urlsafe_b64encode(json.dumps({"alg": "RS256", "typ": "JWT"}).encode()).decode().rstrip("=")
+        payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+        signature = base64.urlsafe_b64encode(b"fake_signature").decode().rstrip("=")
+        id_token = f"{header}.{payload_b64}.{signature}"
+        
+        result = service.verify_and_decode_id_token(
+            id_token=id_token,
+            client_id="test_client_id",
+        )
+        
+        assert result["sub"] == "12345"
+        assert result["email"] == "test@example.com"
+        assert result["name"] == "Test User"
+    
+    def test_verify_id_token_invalid_audience(self, db_session):
+        """Test ID token verification with invalid audience."""
+        service = AuthService(db_session=db_session)
+        
+        import json
+        import base64
+        import time
+        
+        payload = {
+            "sub": "12345",
+            "aud": "wrong_client_id",
+            "iss": "https://accounts.google.com",
+            "exp": int(time.time()) + 3600,
+        }
+        
+        header = base64.urlsafe_b64encode(json.dumps({"alg": "RS256"}).encode()).decode().rstrip("=")
+        payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+        signature = base64.urlsafe_b64encode(b"fake_signature").decode().rstrip("=")
+        id_token = f"{header}.{payload_b64}.{signature}"
+        
+        from pdf_ai_agent.api.exceptions import InvalidIdTokenError
+        
+        with pytest.raises(InvalidIdTokenError, match="Invalid audience"):
+            service.verify_and_decode_id_token(
+                id_token=id_token,
+                client_id="test_client_id",
+            )
+    
+    def test_verify_id_token_expired(self, db_session):
+        """Test ID token verification with expired token."""
+        service = AuthService(db_session=db_session)
+        
+        import json
+        import base64
+        import time
+        
+        payload = {
+            "sub": "12345",
+            "aud": "test_client_id",
+            "iss": "https://accounts.google.com",
+            "exp": int(time.time()) - 3600,  # Expired 1 hour ago
+        }
+        
+        header = base64.urlsafe_b64encode(json.dumps({"alg": "RS256"}).encode()).decode().rstrip("=")
+        payload_b64 = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+        signature = base64.urlsafe_b64encode(b"fake_signature").decode().rstrip("=")
+        id_token = f"{header}.{payload_b64}.{signature}"
+        
+        from pdf_ai_agent.api.exceptions import InvalidIdTokenError
+        
+        with pytest.raises(InvalidIdTokenError, match="Token expired"):
+            service.verify_and_decode_id_token(
+                id_token=id_token,
+                client_id="test_client_id",
+            )
+    
+    @pytest.mark.asyncio
+    async def test_handle_oauth_user_existing_identity(self, db_session):
+        """Test OAuth user handling with existing identity."""
+        from pdf_ai_agent.config.database.models.model_user import UserModel
+        from pdf_ai_agent.config.database.models.model_auth import OAuthIdentityModel
+        
+        # Create existing user and OAuth identity
+        user = UserModel(
+            username="testuser",
+            email="test@example.com",
+            full_name="Test User",
+            is_active=True,
+        )
+        db_session.add(user)
+        await db_session.flush()
+        
+        oauth_identity = OAuthIdentityModel(
+            user_id=user.user_id,
+            provider="google",
+            provider_subject="12345",
+            provider_email="test@example.com",
+        )
+        db_session.add(oauth_identity)
+        await db_session.commit()
+        
+        service = AuthService(db_session=db_session)
+        
+        # Handle OAuth user (should return existing user)
+        result_user, is_new = await service.handle_oauth_user(
+            provider="google",
+            provider_subject="12345",
+            provider_email="test@example.com",
+            provider_name="Test User Updated",
+        )
+        
+        assert result_user.user_id == user.user_id
+        assert is_new is False
+        assert result_user.full_name == "Test User Updated"
+    
+    @pytest.mark.asyncio
+    async def test_handle_oauth_user_link_existing_email(self, db_session):
+        """Test OAuth user handling - link to existing email."""
+        from pdf_ai_agent.config.database.models.model_user import UserModel
+        
+        # Create existing user with email (no OAuth identity yet)
+        user = UserModel(
+            username="existinguser",
+            email="existing@example.com",
+            full_name="Existing User",
+            is_active=True,
+        )
+        db_session.add(user)
+        await db_session.commit()
+        
+        service = AuthService(db_session=db_session)
+        
+        # Handle OAuth user (should link to existing user)
+        result_user, is_new = await service.handle_oauth_user(
+            provider="google",
+            provider_subject="67890",
+            provider_email="existing@example.com",
+            provider_name="Google Name",
+        )
+        
+        assert result_user.user_id == user.user_id
+        assert is_new is False
+        
+        # Verify OAuth identity was created
+        from sqlalchemy import select
+        from pdf_ai_agent.config.database.models.model_auth import OAuthIdentityModel
+        
+        result = await db_session.execute(
+            select(OAuthIdentityModel).where(
+                OAuthIdentityModel.user_id == user.user_id
+            )
+        )
+        oauth_identity = result.scalar_one_or_none()
+        assert oauth_identity is not None
+        assert oauth_identity.provider_subject == "67890"
+    
+    @pytest.mark.asyncio
+    async def test_handle_oauth_user_create_new(self, db_session):
+        """Test OAuth user handling - create new user."""
+        service = AuthService(db_session=db_session)
+        
+        # Handle OAuth user (should create new user)
+        result_user, is_new = await service.handle_oauth_user(
+            provider="google",
+            provider_subject="new12345",
+            provider_email="newuser@example.com",
+            provider_name="New User",
+            avatar_url="https://example.com/avatar.jpg",
+        )
+        
+        assert is_new is True
+        assert result_user.email == "newuser@example.com"
+        assert result_user.full_name == "New User"
+        assert result_user.avatar_url == "https://example.com/avatar.jpg"
+        assert result_user.email_verified is True
+        
+        # Verify OAuth identity was created
+        from sqlalchemy import select
+        from pdf_ai_agent.config.database.models.model_auth import OAuthIdentityModel
+        
+        result = await db_session.execute(
+            select(OAuthIdentityModel).where(
+                OAuthIdentityModel.user_id == result_user.user_id
+            )
+        )
+        oauth_identity = result.scalar_one_or_none()
+        assert oauth_identity is not None
+        assert oauth_identity.provider_subject == "new12345"
+    
+    def test_generate_username_from_email(self, db_session):
+        """Test username generation from email."""
+        service = AuthService(db_session=db_session)
+        
+        username1 = service._generate_username_from_email("john.doe@example.com")
+        assert username1 == "john_doe"
+        
+        username2 = service._generate_username_from_email("test+tag@example.com")
+        assert "test" in username2
+        
+        username3 = service._generate_username_from_email("verylongemailaddressname@example.com")
+        assert len(username3) <= 20
