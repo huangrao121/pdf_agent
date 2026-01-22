@@ -65,3 +65,21 @@ class InvalidRedirectError(AuthenticationError):
     """Exception raised when redirect_to is invalid."""
     def __init__(self, message: str = "Invalid redirect_to parameter."):
         super().__init__(message, "VALIDATION_FAILED")
+
+
+class InvalidOAuthStateError(AuthenticationError):
+    """Exception raised when OAuth state parameter is invalid or doesn't match."""
+    def __init__(self, message: str = "Invalid or expired OAuth state."):
+        super().__init__(message, "INVALID_OAUTH_STATE")
+
+
+class OAuthProviderError(AuthenticationError):
+    """Exception raised when OAuth provider returns an error."""
+    def __init__(self, message: str = "OAuth provider error.", error_code: str = "OAUTH_PROVIDER_ERROR"):
+        super().__init__(message, error_code)
+
+
+class InvalidIdTokenError(AuthenticationError):
+    """Exception raised when id_token validation fails."""
+    def __init__(self, message: str = "Invalid or expired id_token."):
+        super().__init__(message, "INVALID_ID_TOKEN")

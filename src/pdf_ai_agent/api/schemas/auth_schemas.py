@@ -129,3 +129,21 @@ class OAuthAuthorizeResponse(BaseModel):
     """OAuth authorization success response schema."""
     status: str = Field(default="ok", description="Response status")
     data: OAuthAuthorizeData
+
+
+class OAuthCallbackData(BaseModel):
+    """OAuth callback data containing tokens and user info."""
+    access_token: str = Field(..., description="JWT access token")
+    token_type: str = Field(default="Bearer", description="Token type")
+    expires_in: int = Field(..., description="Token expiration time in seconds")
+    refresh_token: Optional[str] = Field(None, description="Optional refresh token")
+    user_id: str = Field(..., description="User ID")
+    email: str = Field(..., description="User email")
+    full_name: Optional[str] = Field(None, description="User full name")
+
+
+class OAuthCallbackResponse(BaseModel):
+    """OAuth callback success response schema."""
+    status: str = Field(default="ok", description="Response status")
+    message: str = Field(default="oauth login successful", description="Response message")
+    data: OAuthCallbackData
