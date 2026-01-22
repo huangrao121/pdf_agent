@@ -27,6 +27,7 @@ dependencies = [
     "pyyaml>=6.0.0",
     "python-dotenv>=1.0.0",
     "httpx>=0.28.1",
+    "google-auth>=2.47.0",
 ]
 
 [project.optional-dependencies]

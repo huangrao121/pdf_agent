@@ -13,6 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, Dict, Any, Tuple
 import httpx
 
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token as google_id_token
+
 from pdf_ai_agent.config.database.models.model_user import UserModel
 from pdf_ai_agent.config.database.models.model_auth import PasswordCredentialModel, OAuthIdentityModel, OAuthProviderEnum
 from pdf_ai_agent.security.password_utils import verify_password, hash_password
@@ -354,34 +357,12 @@ class AuthService:
             InvalidIdTokenError: If token is invalid or verification fails
         """
         try:
-            # Split JWT into parts
-            parts = id_token.split('.')
-            if len(parts) != 3:
-                raise InvalidIdTokenError("Invalid JWT format")
+            request = google_requests.Request()
+            id_info = google_id_token.verify_oauth2_token(id_token, request, client_id)
             
-            # Decode payload (base64url decode)
-            # Add padding if needed
-            payload_b64 = parts[1]
-            padding = 4 - len(payload_b64) % 4
-            if padding != 4:
-                payload_b64 += '=' * padding
-            
-            payload_json = base64.urlsafe_b64decode(payload_b64)
-            payload = json.loads(payload_json)
-            
-            # Basic validation
-            if payload.get('aud') != client_id:
-                raise InvalidIdTokenError("Invalid audience")
-            
-            if payload.get('iss') not in ['https://accounts.google.com', 'accounts.google.com']:
-                raise InvalidIdTokenError("Invalid issuer")
-            
-            # Check expiration (exp is Unix timestamp)
-            if payload.get('exp', 0) < time.time():
-                raise InvalidIdTokenError("Token expired")
-            
-            return payload
-            
+            if id_info.get('iss') not in ['accounts.google.com', 'https://accounts.google.com']:
+                raise InvalidIdTokenError("Invalid issuer in ID token")
+            return id_info
         except (ValueError, KeyError, json.JSONDecodeError) as e:
             logger.error(f"ID token verification failed: {e}", exc_info=True)
             raise InvalidIdTokenError(f"Failed to verify ID token: {str(e)}")
