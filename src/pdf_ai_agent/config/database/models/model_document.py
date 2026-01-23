@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, String, Text, ForeignKey
+from sqlalchemy import Integer, String, Text, ForeignKey, Boolean
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 from sqlalchemy.dialects.postgresql import BIGINT as BigInteger
 from sqlalchemy.dialects.postgresql import JSONB
@@ -20,8 +20,8 @@ if TYPE_CHECKING:
 class DocStatus(PyEnum):
     UPLOADED = "uploaded"
     PROCESSING = "processing"
-    PROCESSED = "processed"
-    ERROR = "error"
+    READY = "ready"
+    FAILED = "failed"
 
 class DocsModel(Base, TimestampMixin):
     """文档模型 - 存储上传的 PDF 文档元数据
@@ -61,6 +61,7 @@ class DocsModel(Base, TimestampMixin):
     author: Mapped[str] = mapped_column(String(255), nullable=True)  # 作者
     description: Mapped[str] = mapped_column(Text, nullable=True)  # 文档描述/摘要
     language: Mapped[str] = mapped_column(String(50), nullable=True)  # 语言代码 (e.g., en, zh)
+    num_pages: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # PDF 总页数
 
     # 处理状态
     status: Mapped[str] = mapped_column(
@@ -105,6 +106,49 @@ class DocsModel(Base, TimestampMixin):
         "JobModel",
         back_populates="doc",
         cascade="all, delete-orphan",
+    )
+    pages: Mapped[list["DocPageModel"]] = relationship(
+        "DocPageModel",
+        back_populates="doc",
+        cascade="all, delete-orphan",
+    )
+
+
+class DocPageModel(Base, CreatedMixin):
+    """文档页面模型 - 存储 PDF 文档的页面元数据
+    
+    每个 PDF 文档包含多个页面，此模型存储每页的基本信息。
+    用于快速获取页面尺寸、旋转等元数据，无需重新解析 PDF。
+    
+    设计要点:
+    - page 字段使用 1-based 索引（符合 PDF 规范和用户习惯）
+    - 存储页面物理属性（宽、高、旋转）
+    - text_layer_available 标识该页是否有可提取文本（非扫描件）
+    - 通过 DOC_PARSE_METADATA 作业填充
+    """
+    __tablename__ = 'doc_page'
+    __table_args__ = (
+        # 复合唯一索引：doc_id + page 确保每页唯一
+        Index('idx_doc_pages_doc_id_page', 'doc_id', 'page', unique=True),
+    )
+
+    # 主键
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    
+    # 外键 - 所属文档
+    doc_id: Mapped[int] = mapped_column(Integer, ForeignKey('doc.doc_id'), nullable=False, index=True)
+
+    # 页面信息
+    page: Mapped[int] = mapped_column(Integer, nullable=False)  # 页码（1-based）
+    width_pt: Mapped[float] = mapped_column(Integer, nullable=False)  # 页面宽度（点，1/72 英寸）
+    height_pt: Mapped[float] = mapped_column(Integer, nullable=False)  # 页面高度（点）
+    rotation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 旋转角度（0, 90, 180, 270）
+    text_layer_available: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # 是否有文本层
+    
+    # Relationships
+    doc: Mapped["DocsModel"] = relationship(
+        "DocsModel",
+        back_populates="pages",
     )
 
 
@@ -364,6 +408,7 @@ class JobTypeEnum(PyEnum):
     INGEST_DOC = "ingest_document"
     REINDEX_DOC = "reindex_document"
     DELETE_DOC = "delete_document"
+    DOC_PARSE_METADATA = "doc_parse_metadata"
 
 class JobStatusEnum(PyEnum):
     PENDING = "pending"
