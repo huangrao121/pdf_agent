@@ -27,6 +27,15 @@ router = APIRouter(prefix="/api/workspaces", tags=["Documents"])
 logger = logging.getLogger(__name__)
 
 
+# Status mapping constant
+DOC_STATUS_MAP = {
+    "uploaded": DocStatusEnum.UPLOADED,
+    "processing": DocStatusEnum.PROCESSING,
+    "ready": DocStatusEnum.READY,
+    "failed": DocStatusEnum.FAILED,
+}
+
+
 def get_document_service(
     session: AsyncSession = Depends(get_db_session)
 ) -> DocumentService:
@@ -118,18 +127,13 @@ async def upload_document(
             description=description,
         )
         
-        # Map status to response enum
-        status_map = {
-            "uploaded": DocStatusEnum.UPLOADED,
-            "processing": DocStatusEnum.PROCESSING,
-            "ready": DocStatusEnum.READY,
-            "failed": DocStatusEnum.FAILED,
-        }
+        # Get status value (doc.status is an enum in DB)
+        status_value = doc.status.value if hasattr(doc.status, 'value') else doc.status
         
         return DocUploadResponse(
             doc_id=doc.doc_id,
             filename=doc.filename,
-            status=status_map.get(doc.status, DocStatusEnum.UPLOADED)
+            status=DOC_STATUS_MAP.get(status_value, DocStatusEnum.UPLOADED)
         )
         
     except HTTPException:

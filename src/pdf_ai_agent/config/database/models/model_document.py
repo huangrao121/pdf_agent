@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, String, Text, ForeignKey, Boolean
+from sqlalchemy import Integer, String, Text, ForeignKey, Boolean, Float
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 from sqlalchemy.dialects.postgresql import BIGINT as BigInteger
 from sqlalchemy.dialects.postgresql import JSONB
@@ -140,8 +140,8 @@ class DocPageModel(Base, CreatedMixin):
 
     # 页面信息
     page: Mapped[int] = mapped_column(Integer, nullable=False)  # 页码（1-based）
-    width_pt: Mapped[float] = mapped_column(Integer, nullable=False)  # 页面宽度（点，1/72 英寸）
-    height_pt: Mapped[float] = mapped_column(Integer, nullable=False)  # 页面高度（点）
+    width_pt: Mapped[float] = mapped_column(Float, nullable=False)  # 页面宽度（点，1/72 英寸）
+    height_pt: Mapped[float] = mapped_column(Float, nullable=False)  # 页面高度（点）
     rotation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)  # 旋转角度（0, 90, 180, 270）
     text_layer_available: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # 是否有文本层
     
