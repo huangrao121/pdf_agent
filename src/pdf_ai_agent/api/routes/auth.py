@@ -195,7 +195,7 @@ async def login(
     
     except PydanticValidationError as e:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={
                 "status": "error",
                 "error_code": "VALIDATION_FAILED",
@@ -332,7 +332,7 @@ async def register(
     
     except PydanticValidationError as e:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={
                 "status": "error",
                 "error_code": "VALIDATION_FAILED",
@@ -481,7 +481,7 @@ async def oauth_google_authorize(
     
     except InvalidRedirectError as e:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={
                 "status": "error",
                 "error_code": e.error_code,
@@ -491,7 +491,7 @@ async def oauth_google_authorize(
     
     except PydanticValidationError as e:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={
                 "status": "error",
                 "error_code": "VALIDATION_FAILED",
