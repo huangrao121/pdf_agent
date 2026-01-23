@@ -19,27 +19,28 @@ class LocalStorageService:
     Organizes files by workspace_id and uses doc_id for naming.
     """
     
-    def __init__(self, base_path: str = "/tmp/pdf_storage"):
+    def __init__(self, base_path: str = "tmp/pdf_storage"):
         """
         Initialize local storage service.
         
         Args:
             base_path: Base directory for storing files
         """
-        self.base_path = Path(base_path)
+        self.project_dir = Path(__file__).parent.parent.parent.parent.resolve()
+        self.base_path = self.project_dir / base_path
         self.base_path.mkdir(parents=True, exist_ok=True)
     
     def compute_sha256_streaming(
         self, 
         file_obj: BinaryIO, 
-        chunk_size: int = 8 * 1024 * 1024  # 8MB chunks
+        chunk_size: int = 4 * 1024 * 1024  # 4MB chunks
     ) -> Tuple[str, int]:
         """
         Compute SHA-256 hash of a file while streaming.
         
         Args:
             file_obj: File object to read from
-            chunk_size: Size of chunks to read (default 8MB)
+            chunk_size: Size of chunks to read (default 4MB)
         
         Returns:
             Tuple of (hex digest, file size in bytes)
@@ -68,7 +69,7 @@ class LocalStorageService:
         workspace_id: int,
         doc_id: int,
         filename: str,
-        chunk_size: int = 8 * 1024 * 1024  # 8MB chunks
+        chunk_size: int = 4 * 1024 * 1024  # 4MB chunks
     ) -> str:
         """
         Save a file to local storage using streaming.
@@ -78,7 +79,7 @@ class LocalStorageService:
             workspace_id: Workspace ID
             doc_id: Document ID
             filename: Original filename
-            chunk_size: Size of chunks to write (default 8MB)
+            chunk_size: Size of chunks to write (default 4MB)
         
         Returns:
             storage_uri: URI for accessing the file

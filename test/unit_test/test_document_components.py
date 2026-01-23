@@ -4,41 +4,53 @@ Unit tests for document service components.
 import io
 import pytest
 from pdf_ai_agent.storage.local_storage import LocalStorageService
+from pdf_ai_agent.jobs.job_queue import JobQueueService
+
+@pytest.fixture
+def test_storage_service(tmp_path) -> LocalStorageService:
+    """Fixture for LocalStorageService with temporary path."""
+    storage = LocalStorageService(base_path=tmp_path)
+    return storage
+
+@pytest.fixture
+def test_job_queue_service():
+    """Fixture for JobQueueService"""
+    return JobQueueService()
 
 
 class TestPDFValidation:
     """Tests for PDF validation."""
     
-    def test_pdf_magic_bytes_valid(self):
+    def test_pdf_magic_bytes_valid(self, db_session, test_storage_service, test_job_queue_service):
         """Test valid PDF magic bytes."""
         from pdf_ai_agent.api.services.document_service import DocumentService
         
         # Create a mock session (not used for this test)
-        doc_service = DocumentService(db_session=None)
+        doc_service = DocumentService(db_session=db_session, storage_service=test_storage_service, job_queue_service=test_job_queue_service)
         
         # Valid PDF file
         valid_pdf = io.BytesIO(b"%PDF-1.4\n%some content")
-        assert doc_service.validate_pdf_magic_bytes(valid_pdf)
+        assert doc_service._validate_pdf_magic_bytes(valid_pdf)
     
-    def test_pdf_magic_bytes_invalid(self):
+    def test_pdf_magic_bytes_invalid(self, db_session, test_storage_service, test_job_queue_service):
         """Test invalid PDF magic bytes."""
         from pdf_ai_agent.api.services.document_service import DocumentService
         
-        doc_service = DocumentService(db_session=None)
+        doc_service = DocumentService(db_session=db_session, storage_service=test_storage_service, job_queue_service=test_job_queue_service)
         
         # Invalid file
         invalid_file = io.BytesIO(b"Not a PDF file")
-        assert not doc_service.validate_pdf_magic_bytes(invalid_file)
+        assert not doc_service._validate_pdf_magic_bytes(invalid_file)
     
-    def test_pdf_magic_bytes_empty(self):
+    def test_pdf_magic_bytes_empty(self, db_session, test_storage_service, test_job_queue_service):
         """Test empty file."""
         from pdf_ai_agent.api.services.document_service import DocumentService
         
-        doc_service = DocumentService(db_session=None)
+        doc_service = DocumentService(db_session=db_session, storage_service=test_storage_service, job_queue_service=test_job_queue_service)
         
         # Empty file
         empty_file = io.BytesIO(b"")
-        assert not doc_service.validate_pdf_magic_bytes(empty_file)
+        assert not doc_service._validate_pdf_magic_bytes(empty_file)
 
 
 class TestSHA256Streaming:
@@ -46,7 +58,7 @@ class TestSHA256Streaming:
     
     def test_sha256_computation(self):
         """Test SHA-256 hash computation."""
-        storage = LocalStorageService(base_path="/tmp/test_storage")
+        storage = LocalStorageService(base_path="tmp/test_storage")
         
         # Create test content
         content = b"Test content for hashing"
@@ -64,7 +76,7 @@ class TestSHA256Streaming:
     
     def test_sha256_different_chunk_sizes(self):
         """Test that different chunk sizes produce same hash."""
-        storage = LocalStorageService(base_path="/tmp/test_storage")
+        storage = LocalStorageService(base_path="tmp/test_storage")
         
         # Create larger test content
         content = b"X" * (10 * 1024 * 1024)  # 10MB
@@ -82,7 +94,7 @@ class TestSHA256Streaming:
     
     def test_sha256_same_content_same_hash(self):
         """Test that same content produces same hash."""
-        storage = LocalStorageService(base_path="/tmp/test_storage")
+        storage = LocalStorageService(base_path="tmp/test_storage")
         
         content = b"Consistent content"
         
@@ -96,7 +108,7 @@ class TestSHA256Streaming:
     
     def test_sha256_different_content_different_hash(self):
         """Test that different content produces different hash."""
-        storage = LocalStorageService(base_path="/tmp/test_storage")
+        storage = LocalStorageService(base_path="tmp/test_storage")
         
         file_obj1 = io.BytesIO(b"Content A")
         sha1, _ = storage.compute_sha256_streaming(file_obj1)
@@ -112,7 +124,7 @@ class TestStorageService:
     
     def test_storage_uri_generation(self):
         """Test storage URI generation."""
-        storage = LocalStorageService(base_path="/tmp/test_storage")
+        storage = LocalStorageService(base_path="tmp/test_storage")
         
         content = b"%PDF-1.4\nTest PDF content"
         file_obj = io.BytesIO(content)

@@ -13,8 +13,8 @@ from pdf_ai_agent.config.database.models.model_document import (
     JobTypeEnum,
 )
 from pdf_ai_agent.config.database.models.model_user import WorkspaceModel
-from pdf_ai_agent.storage.local_storage import get_storage_service
-from pdf_ai_agent.jobs.job_queue import get_job_queue_service
+from pdf_ai_agent.storage.local_storage import LocalStorageService
+from pdf_ai_agent.jobs.job_queue import JobQueueService
 
 logger = logging.getLogger(__name__)
 
@@ -28,18 +28,20 @@ class DocumentService:
     # Maximum file size (100MB)
     MAX_FILE_SIZE = 100 * 1024 * 1024
     
-    def __init__(self, db_session: AsyncSession):
+    def __init__(self, db_session: AsyncSession, storage_service: LocalStorageService, job_queue_service: JobQueueService):
         """
         Initialize document service.
         
         Args:
             db_session: Database session
+            storage_service: Storage service instance
+            job_queue_service: Job queue service instance
         """
         self.db_session = db_session
-        self.storage_service = get_storage_service()
-        self.job_queue_service = get_job_queue_service()
+        self.storage_service = storage_service
+        self.job_queue_service = job_queue_service
     
-    def validate_pdf_magic_bytes(self, file_obj: BinaryIO) -> bool:
+    def _validate_pdf_magic_bytes(self, file_obj: BinaryIO) -> bool:
         """
         Validate PDF magic bytes.
         
@@ -56,7 +58,7 @@ class DocumentService:
         
         return magic == self.PDF_MAGIC_BYTES
     
-    async def check_workspace_membership(
+    async def _check_workspace_membership(
         self, 
         workspace_id: int, 
         user_id: int
@@ -80,7 +82,7 @@ class DocumentService:
         
         return workspace is not None
     
-    async def check_duplicate_by_sha256(
+    async def _check_duplicate_by_sha256(
         self,
         workspace_id: int,
         file_sha256: str
@@ -130,7 +132,7 @@ class DocumentService:
         """
         try:
             # 1. Validate workspace membership
-            has_access = await self.check_workspace_membership(workspace_id, user_id)
+            has_access = await self._check_workspace_membership(workspace_id, user_id)
             if not has_access:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -138,7 +140,7 @@ class DocumentService:
                 )
             
             # 2. Validate PDF magic bytes
-            if not self.validate_pdf_magic_bytes(file_obj):
+            if not self._validate_pdf_magic_bytes(file_obj):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid PDF file: missing PDF magic bytes"
@@ -158,12 +160,12 @@ class DocumentService:
             
             if file_size > self.MAX_FILE_SIZE:
                 raise HTTPException(
-                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
                     detail=f"File too large (max {self.MAX_FILE_SIZE} bytes)"
                 )
             
             # 5. Check for duplicates (idempotency)
-            existing_doc = await self.check_duplicate_by_sha256(
+            existing_doc = await self._check_duplicate_by_sha256(
                 workspace_id, file_sha256
             )
             if existing_doc:

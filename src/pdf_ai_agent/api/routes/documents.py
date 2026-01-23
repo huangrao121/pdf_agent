@@ -22,6 +22,8 @@ from pdf_ai_agent.api.schemas.document_schemas import (
     DocStatusEnum,
     DocErrorResponse,
 )
+from pdf_ai_agent.storage.local_storage import LocalStorageService, get_storage_service
+from pdf_ai_agent.jobs.job_queue import JobQueueService, get_job_queue_service
 
 router = APIRouter(prefix="/api/workspaces", tags=["Documents"])
 logger = logging.getLogger(__name__)
@@ -37,11 +39,16 @@ DOC_STATUS_MAP = {
 
 
 def get_document_service(
-    session: AsyncSession = Depends(get_db_session)
+    session: AsyncSession = Depends(get_db_session),
+    storage_service: LocalStorageService = Depends(get_storage_service),
+    job_queue_service: JobQueueService = Depends(get_job_queue_service),
 ) -> DocumentService:
     """Get DocumentService instance."""
-    return DocumentService(db_session=session)
-
+    return DocumentService(
+        db_session=session,
+        storage_service=storage_service,
+        job_queue_service=job_queue_service
+    )
 
 @router.post(
     "/{workspace_id}/docs",
