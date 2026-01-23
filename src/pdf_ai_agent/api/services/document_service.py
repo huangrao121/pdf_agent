@@ -319,7 +319,7 @@ class DocumentService:
         Args:
             workspace_id: Workspace ID
             user_id: User ID
-            limit: Number of items per page (1-100)
+            limit: Number of items per page (1-100, validated by FastAPI)
             cursor: Optional cursor for pagination
         
         Returns:
@@ -328,14 +328,7 @@ class DocumentService:
         Raises:
             HTTPException: If validation fails or access denied
         """
-        # 1. Validate limit
-        if limit < 1 or limit > 100:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid limit: must be between 1 and 100"
-            )
-        
-        # 2. Check workspace access
+        # 1. Check workspace access
         has_access = await self._check_workspace_membership(workspace_id, user_id)
         if not has_access:
             raise HTTPException(
@@ -343,12 +336,12 @@ class DocumentService:
                 detail="FORBIDDEN_WORKSPACE"
             )
         
-        # 3. Build query with stable ordering
+        # 2. Build query with stable ordering
         query = select(DocsModel).where(
             DocsModel.workspace_id == workspace_id
         )
         
-        # 4. Apply cursor filter if provided
+        # 3. Apply cursor filter if provided
         if cursor:
             cursor_doc_id, cursor_created_at = self.decode_cursor(cursor)
             # WHERE (created_at < cursor_created_at) OR (created_at = cursor_created_at AND id < cursor_doc_id)
@@ -362,17 +355,17 @@ class DocumentService:
                 )
             )
         
-        # 5. Apply ordering and limit
+        # 4. Apply ordering and limit
         query = query.order_by(
             DocsModel.created_at.desc(),
             DocsModel.doc_id.desc()
         ).limit(limit + 1)  # Fetch one extra to check if there's a next page
         
-        # 6. Execute query
+        # 5. Execute query
         result = await self.db_session.execute(query)
         documents = list(result.scalars().all())
         
-        # 7. Determine if there's a next page
+        # 6. Determine if there's a next page
         next_cursor = None
         if len(documents) > limit:
             # There's a next page

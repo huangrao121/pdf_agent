@@ -40,7 +40,7 @@ class DocsModel(Base, TimestampMixin):
     __table_args__ = (
         # 复合唯一索引：同一 workspace 中不能有相同 SHA256 的文档
         Index('idx_docs_workspace_filehash', 'workspace_id', 'file_sha256', unique=True),
-        # 复合索引：用于稳定的cursor分页查询
+        # Composite index for stable cursor pagination queries
         Index('idx_docs_workspace_created_id', 'workspace_id', 'created_at', 'doc_id'),
     )
 

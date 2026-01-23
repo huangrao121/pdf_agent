@@ -4,10 +4,15 @@ Integration tests for document list endpoint.
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from pdf_ai_agent.config.database.models.model_user import UserModel, WorkspaceModel
 from pdf_ai_agent.config.database.models.model_document import DocsModel, DocStatus
+
+
+def parse_datetime_field(dt_string: str) -> datetime:
+    """Parse datetime string from API response, handling both Z and +00:00 timezones."""
+    return datetime.fromisoformat(dt_string.replace('Z', '+00:00'))
 
 
 @pytest.fixture
@@ -222,8 +227,8 @@ async def test_list_documents_stable_ordering(test_app, db_session, test_user, t
             current = items[i]
             next_item = items[i + 1]
             
-            current_time = datetime.fromisoformat(current["created_at"].replace('Z', '+00:00'))
-            next_time = datetime.fromisoformat(next_item["created_at"].replace('Z', '+00:00'))
+            current_time = parse_datetime_field(current["created_at"])
+            next_time = parse_datetime_field(next_item["created_at"])
             
             # created_at should be descending
             if current_time == next_time:
