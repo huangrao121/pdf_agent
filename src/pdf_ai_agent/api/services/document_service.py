@@ -2,9 +2,12 @@
 Document service for handling PDF upload and management.
 """
 import logging
-from typing import BinaryIO, Tuple, Optional
+import json
+import base64
+from typing import BinaryIO, Tuple, Optional, List, Dict, Any
+from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, and_, or_
 from fastapi import HTTPException, status
 
 from pdf_ai_agent.config.database.models.model_document import (
@@ -240,3 +243,141 @@ class DocumentService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Document upload failed: {str(e)}"
             )
+    
+    @staticmethod
+    def encode_cursor(doc_id: int, created_at: datetime) -> str:
+        """
+        Encode cursor for pagination.
+        
+        Args:
+            doc_id: Document ID
+            created_at: Created timestamp
+        
+        Returns:
+            Base64url encoded JSON cursor
+        """
+        cursor_data = {
+            "doc_id": doc_id,
+            "created_at": created_at.isoformat()
+        }
+        cursor_json = json.dumps(cursor_data, separators=(',', ':'))
+        cursor_bytes = cursor_json.encode('utf-8')
+        # Use urlsafe_b64encode and strip padding
+        encoded = base64.urlsafe_b64encode(cursor_bytes).decode('utf-8').rstrip('=')
+        return encoded
+    
+    @staticmethod
+    def decode_cursor(cursor: str) -> Tuple[int, datetime]:
+        """
+        Decode cursor for pagination.
+        
+        Args:
+            cursor: Base64url encoded cursor
+        
+        Returns:
+            Tuple of (doc_id, created_at)
+        
+        Raises:
+            HTTPException: If cursor is invalid
+        """
+        try:
+            # Add padding if needed
+            padding = 4 - (len(cursor) % 4)
+            if padding != 4:
+                cursor += '=' * padding
+            
+            cursor_bytes = base64.urlsafe_b64decode(cursor.encode('utf-8'))
+            cursor_json = cursor_bytes.decode('utf-8')
+            cursor_data = json.loads(cursor_json)
+            
+            # Validate required fields
+            if 'doc_id' not in cursor_data or 'created_at' not in cursor_data:
+                raise ValueError("Missing required fields in cursor")
+            
+            doc_id = int(cursor_data['doc_id'])
+            created_at = datetime.fromisoformat(cursor_data['created_at'])
+            
+            return doc_id, created_at
+            
+        except (ValueError, KeyError, json.JSONDecodeError) as e:
+            logger.warning(f"Invalid cursor: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid cursor: INVALID_CURSOR"
+            )
+    
+    async def list_documents(
+        self,
+        workspace_id: int,
+        user_id: int,
+        limit: int = 20,
+        cursor: Optional[str] = None
+    ) -> Tuple[List[DocsModel], Optional[str]]:
+        """
+        List documents in a workspace with cursor-based pagination.
+        
+        Args:
+            workspace_id: Workspace ID
+            user_id: User ID
+            limit: Number of items per page (1-100)
+            cursor: Optional cursor for pagination
+        
+        Returns:
+            Tuple of (documents list, next_cursor)
+        
+        Raises:
+            HTTPException: If validation fails or access denied
+        """
+        # 1. Validate limit
+        if limit < 1 or limit > 100:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid limit: must be between 1 and 100"
+            )
+        
+        # 2. Check workspace access
+        has_access = await self._check_workspace_membership(workspace_id, user_id)
+        if not has_access:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="FORBIDDEN_WORKSPACE"
+            )
+        
+        # 3. Build query with stable ordering
+        query = select(DocsModel).where(
+            DocsModel.workspace_id == workspace_id
+        )
+        
+        # 4. Apply cursor filter if provided
+        if cursor:
+            cursor_doc_id, cursor_created_at = self.decode_cursor(cursor)
+            # WHERE (created_at < cursor_created_at) OR (created_at = cursor_created_at AND id < cursor_doc_id)
+            query = query.where(
+                or_(
+                    DocsModel.created_at < cursor_created_at,
+                    and_(
+                        DocsModel.created_at == cursor_created_at,
+                        DocsModel.doc_id < cursor_doc_id
+                    )
+                )
+            )
+        
+        # 5. Apply ordering and limit
+        query = query.order_by(
+            DocsModel.created_at.desc(),
+            DocsModel.doc_id.desc()
+        ).limit(limit + 1)  # Fetch one extra to check if there's a next page
+        
+        # 6. Execute query
+        result = await self.db_session.execute(query)
+        documents = list(result.scalars().all())
+        
+        # 7. Determine if there's a next page
+        next_cursor = None
+        if len(documents) > limit:
+            # There's a next page
+            documents = documents[:limit]
+            last_doc = documents[-1]
+            next_cursor = self.encode_cursor(last_doc.doc_id, last_doc.created_at)
+        
+        return documents, next_cursor
