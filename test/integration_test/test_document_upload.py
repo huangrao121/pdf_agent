@@ -3,7 +3,7 @@ Integration tests for document upload endpoint.
 """
 import io
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from pdf_ai_agent.config.database.models.model_user import UserModel, WorkspaceModel
@@ -39,6 +39,24 @@ async def test_workspace(db_session, test_user):
     return workspace
 
 
+@pytest.fixture
+async def test_app(db_session):
+    """Create test app with overridden dependencies."""
+    from main import create_app
+    
+    app = create_app()
+    
+    # Override db session dependency
+    from pdf_ai_agent.config.database.init_database import get_db_session
+    
+    async def override_get_db_session():
+        yield db_session
+    
+    app.dependency_overrides[get_db_session] = override_get_db_session
+    
+    return app
+
+
 def create_pdf_file(content: bytes = b"Test PDF content") -> io.BytesIO:
     """Create a mock PDF file."""
     # Valid PDF starts with %PDF-
@@ -47,17 +65,11 @@ def create_pdf_file(content: bytes = b"Test PDF content") -> io.BytesIO:
 
 
 @pytest.mark.asyncio
-async def test_upload_pdf_success(db_session, test_user, test_workspace):
+async def test_upload_pdf_success(test_app, db_session, test_user, test_workspace):
     """Test successful PDF upload."""
-    from main import create_app
+    transport = ASGITransport(app=test_app)
     
-    app = create_app()
-    
-    # Override db session
-    from pdf_ai_agent.config.database.init_database import get_db_session
-    app.dependency_overrides[get_db_session] = lambda: db_session
-    
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
         # Create PDF file
         pdf_file = create_pdf_file()
         
@@ -88,23 +100,17 @@ async def test_upload_pdf_success(db_session, test_user, test_workspace):
         assert doc.filename == "test.pdf"
         assert doc.workspace_id == test_workspace.workspace_id
         assert doc.owner_user_id == test_user.user_id
-        assert doc.status == "uploaded"
+        assert doc.status.value == "uploaded"  # Compare enum value
         assert doc.file_sha256 is not None
         assert len(doc.file_sha256) == 64
 
 
 @pytest.mark.asyncio
-async def test_upload_pdf_duplicate(db_session, test_user, test_workspace):
+async def test_upload_pdf_duplicate(test_app, db_session, test_user, test_workspace):
     """Test duplicate PDF upload returns existing document."""
-    from main import create_app
+    transport = ASGITransport(app=test_app)
     
-    app = create_app()
-    
-    # Override db session
-    from pdf_ai_agent.config.database.init_database import get_db_session
-    app.dependency_overrides[get_db_session] = lambda: db_session
-    
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
         # Create PDF file with specific content
         pdf_content = b"Unique content for dedup test"
         pdf_file1 = create_pdf_file(pdf_content)
@@ -136,10 +142,8 @@ async def test_upload_pdf_duplicate(db_session, test_user, test_workspace):
 
 
 @pytest.mark.asyncio
-async def test_upload_pdf_different_workspaces(db_session, test_user):
+async def test_upload_pdf_different_workspaces(test_app, db_session, test_user):
     """Test same file in different workspaces creates separate documents."""
-    from main import create_app
-    
     # Create two workspaces
     workspace1 = WorkspaceModel(
         name="Workspace 1",
@@ -154,11 +158,9 @@ async def test_upload_pdf_different_workspaces(db_session, test_user):
     await db_session.refresh(workspace1)
     await db_session.refresh(workspace2)
     
-    app = create_app()
-    from pdf_ai_agent.config.database.init_database import get_db_session
-    app.dependency_overrides[get_db_session] = lambda: db_session
+    transport = ASGITransport(app=test_app)
     
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
         # Same content
         pdf_content = b"Shared content"
         
@@ -189,15 +191,11 @@ async def test_upload_pdf_different_workspaces(db_session, test_user):
 
 
 @pytest.mark.asyncio
-async def test_upload_invalid_pdf(db_session, test_user, test_workspace):
+async def test_upload_invalid_pdf(test_app, db_session, test_user, test_workspace):
     """Test upload of invalid PDF file."""
-    from main import create_app
+    transport = ASGITransport(app=test_app)
     
-    app = create_app()
-    from pdf_ai_agent.config.database.init_database import get_db_session
-    app.dependency_overrides[get_db_session] = lambda: db_session
-    
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
         # Invalid file (not a PDF)
         invalid_file = io.BytesIO(b"Not a PDF file")
         
@@ -211,10 +209,8 @@ async def test_upload_invalid_pdf(db_session, test_user, test_workspace):
 
 
 @pytest.mark.asyncio
-async def test_upload_no_workspace_access(db_session, test_user):
+async def test_upload_no_workspace_access(test_app, db_session, test_user):
     """Test upload without workspace access."""
-    from main import create_app
-    
     # Create another user
     other_user = UserModel(
         username="otheruser",
@@ -234,11 +230,9 @@ async def test_upload_no_workspace_access(db_session, test_user):
     await db_session.commit()
     await db_session.refresh(other_workspace)
     
-    app = create_app()
-    from pdf_ai_agent.config.database.init_database import get_db_session
-    app.dependency_overrides[get_db_session] = lambda: db_session
+    transport = ASGITransport(app=test_app)
     
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
         pdf_file = create_pdf_file()
         
         # Try to upload to other user's workspace
@@ -252,15 +246,11 @@ async def test_upload_no_workspace_access(db_session, test_user):
 
 
 @pytest.mark.asyncio
-async def test_upload_empty_file(db_session, test_user, test_workspace):
+async def test_upload_empty_file(test_app, db_session, test_user, test_workspace):
     """Test upload of empty file."""
-    from main import create_app
+    transport = ASGITransport(app=test_app)
     
-    app = create_app()
-    from pdf_ai_agent.config.database.init_database import get_db_session
-    app.dependency_overrides[get_db_session] = lambda: db_session
-    
-    async with AsyncClient(app=app, base_url="http://test") as client:
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
         # Empty file
         empty_file = io.BytesIO(b"")
         
