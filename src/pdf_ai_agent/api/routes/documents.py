@@ -263,12 +263,9 @@ async def list_documents(
 
 @router.get(
     "/{workspace_id}/docs/{doc_id}/metadata",
+    response_model=DocMetadataResponse,
     status_code=status.HTTP_200_OK,
     responses={
-        200: {
-            "model": DocMetadataResponse,
-            "description": "Document metadata"
-        },
         304: {
             "description": "Not Modified - content hasn't changed"
         },
@@ -288,6 +285,7 @@ async def list_documents(
 )
 async def get_document_metadata(
     request: Request,
+    response: Response,
     workspace_id: int = Path(..., description="Workspace ID", gt=0),
     doc_id: int = Path(..., description="Document ID", gt=0),
     user_id: int = Query(..., description="User ID (dev mode)"),
@@ -341,31 +339,31 @@ async def get_document_metadata(
             if_none_match = if_none_match.strip('"')
             if if_none_match == etag_value:
                 # Return 304 Not Modified with ETag header
+                # For 304, we need to return a Response object directly
                 return Response(
                     status_code=status.HTTP_304_NOT_MODIFIED,
                     headers={"ETag": f'"{etag_value}"'}
                 )
         
-        # Return document metadata with ETag header
-        return Response(
-            content=DocMetadataResponse(
-                doc_id=doc.doc_id,
-                filename=doc.filename,
-                file_type=doc.file_type,
-                file_size=doc.file_size,
-                file_sha256=doc.file_sha256,
-                title=doc.title,
-                author=doc.author,
-                description=doc.description,
-                language=doc.language,
-                status=status_value.upper(),
-                error_message=doc.error_message,
-                num_pages=doc.num_pages,
-                created_at=doc.created_at,
-                updated_at=doc.updated_at
-            ).model_dump_json(),
-            media_type="application/json",
-            headers={"ETag": f'"{etag_value}"'}
+        # Set ETag header
+        response.headers["ETag"] = f'"{etag_value}"'
+        
+        # Return document metadata
+        return DocMetadataResponse(
+            doc_id=doc.doc_id,
+            filename=doc.filename,
+            file_type=doc.file_type,
+            file_size=doc.file_size,
+            file_sha256=doc.file_sha256,
+            title=doc.title,
+            author=doc.author,
+            description=doc.description,
+            language=doc.language,
+            status=status_value.upper(),
+            error_message=doc.error_message,
+            num_pages=doc.num_pages,
+            created_at=doc.created_at,
+            updated_at=doc.updated_at
         )
         
     except HTTPException:
