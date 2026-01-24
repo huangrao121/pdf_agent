@@ -110,6 +110,10 @@ class TestRangeHeaderParsing:
         result = LocalStorageService.parse_range_header("bytes=100", 2000)
         assert result is None
 
+        # Empty range (both sides empty)
+        result = LocalStorageService.parse_range_header("bytes=-", 2000)
+        assert result is None
+
         # Spaces
         result = LocalStorageService.parse_range_header("bytes= 0 - 100 ", 2000)
         assert result is None

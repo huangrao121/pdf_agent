@@ -435,6 +435,8 @@ async def stream_document_file(
         )
 
         # If range header was provided but parsing failed, return 416
+        # parse_range_header returns None only for invalid ranges:
+        # - malformed syntax, invalid values, out of bounds, etc.
         if range_header and range_tuple is None:
             return Response(
                 status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,

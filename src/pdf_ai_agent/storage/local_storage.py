@@ -209,6 +209,10 @@ class LocalStorageService:
 
         start_str, end_str = match.groups()
 
+        # Invalid: both None (bytes=-)
+        if start_str is None and end_str is None:
+            return None
+
         # Handle suffix range: bytes=-suffix
         if start_str is None and end_str is not None:
             suffix = int(end_str)
