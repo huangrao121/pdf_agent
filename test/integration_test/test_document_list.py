@@ -6,8 +6,12 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from datetime import datetime, timedelta, timezone
 
+from fastapi import FastAPI
+from contextlib import asynccontextmanager
+
 from pdf_ai_agent.config.database.models.model_user import UserModel, WorkspaceModel
 from pdf_ai_agent.config.database.models.model_document import DocsModel, DocStatus
+from pdf_ai_agent.api.routes.documents import router as documents_router
 
 
 def parse_datetime_field(dt_string: str) -> datetime:
@@ -47,9 +51,19 @@ async def test_workspace(db_session, test_user):
 @pytest.fixture
 async def test_app(db_session):
     """Create test app with overridden dependencies."""
-    from main import create_app
+    #from ...main import create_app
     
-    app = create_app()
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        from pdf_ai_agent.config.database.init_database import get_database_config, init_database, close_engine
+
+        config = get_database_config()
+        await init_database(config)
+        yield
+        await close_engine()
+
+    app = FastAPI(title="PDF_Agent",lifespan=lifespan)
+    app.include_router(documents_router)
     
     # Override db session dependency
     from pdf_ai_agent.config.database.init_database import get_db_session
