@@ -4,6 +4,7 @@ Document routes for PDF upload and management.
 
 import logging
 import hashlib
+import re
 from typing import Optional
 from fastapi import (
     APIRouter,
@@ -37,6 +38,38 @@ from pdf_ai_agent.jobs.job_queue import JobQueueService, get_job_queue_service
 
 router = APIRouter(prefix="/api/workspaces", tags=["Documents"])
 logger = logging.getLogger(__name__)
+
+
+def sanitize_filename(filename: str) -> str:
+    """
+    Sanitize filename for use in Content-Disposition header.
+
+    Removes or replaces characters that could cause header injection
+    or other security issues.
+
+    Args:
+        filename: Original filename
+
+    Returns:
+        Sanitized filename safe for Content-Disposition header
+    """
+    # Remove any newlines, carriage returns, or other control characters
+    filename = re.sub(r"[\r\n\x00-\x1f\x7f]", "", filename)
+    # Remove or escape quotes and backslashes
+    filename = filename.replace('"', "").replace("\\", "")
+    # Limit length to prevent header overflow
+    max_length = 200
+    if len(filename) > max_length:
+        # Keep extension if present
+        name_parts = filename.rsplit(".", 1)
+        if len(name_parts) == 2:
+            name, ext = name_parts
+            # Reserve space for extension, ellipsis, and dot
+            name = name[: max_length - len(ext) - 4] + "..."
+            filename = f"{name}.{ext}"
+        else:
+            filename = filename[: max_length - 3] + "..."
+    return filename
 
 
 def compute_etag(status: str, num_pages: Optional[int], updated_at: str) -> str:
@@ -448,10 +481,11 @@ async def stream_document_file(
             )
 
         # Prepare response headers
+        safe_filename = sanitize_filename(doc.filename)
         headers = {
             "Accept-Ranges": "bytes",
             "Content-Type": "application/pdf",
-            "Content-Disposition": f'inline; filename="{doc.filename}"',
+            "Content-Disposition": f'inline; filename="{safe_filename}"',
         }
 
         # If no range requested, stream entire file
