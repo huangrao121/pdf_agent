@@ -11,6 +11,7 @@ from fastapi import (
     UploadFile, 
     HTTPException,
     Path,
+    Query,
     status,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +22,8 @@ from pdf_ai_agent.api.schemas.document_schemas import (
     DocUploadResponse,
     DocStatusEnum,
     DocErrorResponse,
+    DocListResponse,
+    DocListItem,
 )
 from pdf_ai_agent.storage.local_storage import LocalStorageService, get_storage_service
 from pdf_ai_agent.jobs.job_queue import JobQueueService, get_job_queue_service
@@ -147,6 +150,88 @@ async def upload_document(
         raise
     except Exception as e:
         logger.error(f"Unexpected error in upload_document: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred"
+        )
+
+
+@router.get(
+    "/{workspace_id}/docs",
+    response_model=DocListResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        400: {
+            "model": DocErrorResponse,
+            "description": "Invalid limit or cursor"
+        },
+        403: {
+            "model": DocErrorResponse,
+            "description": "Forbidden - no access to workspace"
+        },
+    }
+)
+async def list_documents(
+    workspace_id: int = Path(..., description="Workspace ID", gt=0),
+    user_id: int = Query(..., description="User ID (dev mode)"),
+    limit: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    cursor: Optional[str] = Query(None, description="Cursor for pagination"),
+    doc_service: DocumentService = Depends(get_document_service),
+):
+    """
+    List documents in a workspace with cursor-based pagination.
+    
+    **Authentication (Dev Mode):**
+    - Requires `user_id` in query parameter
+    - Production mode would use JWT token authentication
+    
+    **Pagination:**
+    - Uses cursor-based pagination for stable results
+    - Default limit: 20, max limit: 100
+    - Cursor is opaque base64url-encoded JSON
+    
+    **Sorting:**
+    - Sorted by created_at DESC, doc_id DESC (stable ordering)
+    
+    **Returns:**
+    - 200: List of documents with optional next_cursor
+    - 400: Invalid limit or cursor
+    - 403: No access to workspace
+    """
+    try:
+        # List documents
+        documents, next_cursor = await doc_service.list_documents(
+            workspace_id=workspace_id,
+            user_id=user_id,
+            limit=limit,
+            cursor=cursor
+        )
+        
+        # Convert to response format
+        items = []
+        for doc in documents:
+            # Get status value
+            status_value = doc.status.value if hasattr(doc.status, 'value') else doc.status
+            
+            items.append(DocListItem(
+                doc_id=doc.doc_id,
+                filename=doc.filename,
+                title=doc.title or doc.filename,
+                status=status_value.upper(),
+                file_size=doc.file_size,
+                num_pages=doc.num_pages,
+                created_at=doc.created_at
+            ))
+        
+        return DocListResponse(
+            items=items,
+            next_cursor=next_cursor
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in list_documents: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred"
