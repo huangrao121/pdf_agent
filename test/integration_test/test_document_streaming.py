@@ -1,6 +1,7 @@
 """
 Integration tests for PDF streaming endpoint with Range support.
 """
+
 import pytest
 import os
 from httpx import ASGITransport, AsyncClient
@@ -13,9 +14,8 @@ from pdf_ai_agent.config.database.models.model_document import DocsModel, DocSta
 from pdf_ai_agent.api.routes.documents import router as documents_router
 from pdf_ai_agent.storage.local_storage import LocalStorageService
 
-
 # Create test PDF content
-TEST_PDF_CONTENT = b'''%PDF-1.4
+TEST_PDF_CONTENT = b"""%PDF-1.4
 1 0 obj
 << /Type /Catalog /Pages 2 0 R >>
 endobj
@@ -51,7 +51,7 @@ trailer
 startxref
 433
 %%EOF
-'''
+"""
 
 
 @pytest.fixture
@@ -91,6 +91,7 @@ async def storage_service():
     yield service
     # Cleanup
     import shutil
+
     if os.path.exists("/tmp/pdf_storage_test"):
         shutil.rmtree("/tmp/pdf_storage_test")
 
@@ -113,17 +114,17 @@ async def test_document(db_session, test_workspace, test_user, storage_service):
     )
     db_session.add(doc)
     await db_session.flush()
-    
+
     # Save file to storage
     workspace_dir = storage_service.base_path / str(test_workspace.workspace_id)
     workspace_dir.mkdir(parents=True, exist_ok=True)
     file_path = workspace_dir / f"{doc.doc_id}_test.pdf"
-    with open(file_path, 'wb') as f:
+    with open(file_path, "wb") as f:
         f.write(TEST_PDF_CONTENT)
-    
+
     # Update storage URI
     doc.storage_uri = f"local://{test_workspace.workspace_id}/{doc.doc_id}_test.pdf"
-    
+
     await db_session.commit()
     await db_session.refresh(doc)
     return doc
@@ -152,10 +153,14 @@ async def test_document_not_ready(db_session, test_workspace, test_user):
 @pytest.fixture
 async def test_app(db_session, storage_service):
     """Create test app with overridden dependencies."""
-    
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        from pdf_ai_agent.config.database.init_database import get_database_config, init_database, close_engine
+        from pdf_ai_agent.config.database.init_database import (
+            get_database_config,
+            init_database,
+            close_engine,
+        )
 
         config = get_database_config()
         await init_database(config)
@@ -164,102 +169,120 @@ async def test_app(db_session, storage_service):
 
     app = FastAPI(title="PDF_Agent", lifespan=lifespan)
     app.include_router(documents_router)
-    
+
     # Override dependencies
     from pdf_ai_agent.config.database.init_database import get_db_session
     from pdf_ai_agent.storage.local_storage import get_storage_service
-    
+
     async def override_get_db_session():
         yield db_session
-    
+
     def override_get_storage_service():
         return storage_service
-    
+
     app.dependency_overrides[get_db_session] = override_get_db_session
     app.dependency_overrides[get_storage_service] = override_get_storage_service
-    
+
     return app
 
 
 class TestDocumentStreamingAPI:
     """Tests for document streaming API with Range support."""
-    
+
     @pytest.mark.asyncio
-    async def test_stream_full_file(self, test_app, test_user, test_workspace, test_document):
+    async def test_stream_full_file(
+        self, test_app, test_user, test_workspace, test_document
+    ):
         """Test streaming full file without Range header."""
         transport = ASGITransport(app=test_app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get(
                 f"/api/workspaces/{test_workspace.workspace_id}/docs/{test_document.doc_id}/file",
-                params={"user_id": test_user.user_id}
+                params={"user_id": test_user.user_id},
             )
-        
+
         assert response.status_code == 200
         assert response.headers["Content-Type"] == "application/pdf"
         assert response.headers["Accept-Ranges"] == "bytes"
         assert response.headers["Content-Length"] == str(len(TEST_PDF_CONTENT))
-        assert 'Content-Disposition' in response.headers
-        assert 'test.pdf' in response.headers['Content-Disposition']
+        assert "Content-Disposition" in response.headers
+        assert "test.pdf" in response.headers["Content-Disposition"]
         assert response.content == TEST_PDF_CONTENT
-    
+
     @pytest.mark.asyncio
-    async def test_stream_range_start_end(self, test_app, test_user, test_workspace, test_document):
+    async def test_stream_range_start_end(
+        self, test_app, test_user, test_workspace, test_document
+    ):
         """Test streaming with bytes=start-end range."""
         transport = ASGITransport(app=test_app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get(
                 f"/api/workspaces/{test_workspace.workspace_id}/docs/{test_document.doc_id}/file",
                 params={"user_id": test_user.user_id},
-                headers={"Range": "bytes=0-99"}
+                headers={"Range": "bytes=0-99"},
             )
-        
+
         assert response.status_code == 206
         assert response.headers["Content-Type"] == "application/pdf"
         assert response.headers["Accept-Ranges"] == "bytes"
-        assert response.headers["Content-Range"] == f"bytes 0-99/{len(TEST_PDF_CONTENT)}"
+        assert (
+            response.headers["Content-Range"] == f"bytes 0-99/{len(TEST_PDF_CONTENT)}"
+        )
         assert response.headers["Content-Length"] == "100"
         assert len(response.content) == 100
         assert response.content == TEST_PDF_CONTENT[0:100]
-    
+
     @pytest.mark.asyncio
-    async def test_stream_range_start_only(self, test_app, test_user, test_workspace, test_document):
+    async def test_stream_range_start_only(
+        self, test_app, test_user, test_workspace, test_document
+    ):
         """Test streaming with bytes=start- range (to end of file)."""
         transport = ASGITransport(app=test_app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get(
                 f"/api/workspaces/{test_workspace.workspace_id}/docs/{test_document.doc_id}/file",
                 params={"user_id": test_user.user_id},
-                headers={"Range": f"bytes=500-"}
+                headers={"Range": f"bytes=500-"},
             )
-        
+
         assert response.status_code == 206
-        assert response.headers["Content-Range"] == f"bytes 500-{len(TEST_PDF_CONTENT)-1}/{len(TEST_PDF_CONTENT)}"
+        assert (
+            response.headers["Content-Range"]
+            == f"bytes 500-{len(TEST_PDF_CONTENT)-1}/{len(TEST_PDF_CONTENT)}"
+        )
         expected_length = len(TEST_PDF_CONTENT) - 500
         assert response.headers["Content-Length"] == str(expected_length)
         assert len(response.content) == expected_length
         assert response.content == TEST_PDF_CONTENT[500:]
-    
+
     @pytest.mark.asyncio
-    async def test_stream_range_suffix(self, test_app, test_user, test_workspace, test_document):
+    async def test_stream_range_suffix(
+        self, test_app, test_user, test_workspace, test_document
+    ):
         """Test streaming with bytes=-suffix range (last N bytes)."""
         transport = ASGITransport(app=test_app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get(
                 f"/api/workspaces/{test_workspace.workspace_id}/docs/{test_document.doc_id}/file",
                 params={"user_id": test_user.user_id},
-                headers={"Range": "bytes=-100"}
+                headers={"Range": "bytes=-100"},
             )
-        
+
         assert response.status_code == 206
         file_size = len(TEST_PDF_CONTENT)
         start = file_size - 100
-        assert response.headers["Content-Range"] == f"bytes {start}-{file_size-1}/{file_size}"
+        assert (
+            response.headers["Content-Range"]
+            == f"bytes {start}-{file_size-1}/{file_size}"
+        )
         assert response.headers["Content-Length"] == "100"
         assert len(response.content) == 100
         assert response.content == TEST_PDF_CONTENT[-100:]
-    
+
     @pytest.mark.asyncio
-    async def test_stream_range_invalid(self, test_app, test_user, test_workspace, test_document):
+    async def test_stream_range_invalid(
+        self, test_app, test_user, test_workspace, test_document
+    ):
         """Test that invalid range returns 416."""
         transport = ASGITransport(app=test_app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -267,40 +290,44 @@ class TestDocumentStreamingAPI:
             response = await client.get(
                 f"/api/workspaces/{test_workspace.workspace_id}/docs/{test_document.doc_id}/file",
                 params={"user_id": test_user.user_id},
-                headers={"Range": f"bytes=10000-20000"}
+                headers={"Range": f"bytes=10000-20000"},
             )
-        
+
         assert response.status_code == 416
         assert response.headers["Content-Range"] == f"bytes */{len(TEST_PDF_CONTENT)}"
         assert response.headers["Accept-Ranges"] == "bytes"
-    
+
     @pytest.mark.asyncio
-    async def test_stream_range_multiple_not_supported(self, test_app, test_user, test_workspace, test_document):
+    async def test_stream_range_multiple_not_supported(
+        self, test_app, test_user, test_workspace, test_document
+    ):
         """Test that multiple ranges return 416."""
         transport = ASGITransport(app=test_app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get(
                 f"/api/workspaces/{test_workspace.workspace_id}/docs/{test_document.doc_id}/file",
                 params={"user_id": test_user.user_id},
-                headers={"Range": "bytes=0-99,200-299"}
+                headers={"Range": "bytes=0-99,200-299"},
             )
-        
+
         assert response.status_code == 416
         assert response.headers["Accept-Ranges"] == "bytes"
-    
+
     @pytest.mark.asyncio
-    async def test_stream_forbidden_workspace(self, test_app, test_workspace, test_document):
+    async def test_stream_forbidden_workspace(
+        self, test_app, test_workspace, test_document
+    ):
         """Test that access is denied for non-member users."""
         transport = ASGITransport(app=test_app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             # Use a different user_id that doesn't own the workspace
             response = await client.get(
                 f"/api/workspaces/{test_workspace.workspace_id}/docs/{test_document.doc_id}/file",
-                params={"user_id": 9999}
+                params={"user_id": 9999},
             )
-        
+
         assert response.status_code == 403
-    
+
     @pytest.mark.asyncio
     async def test_stream_document_not_found(self, test_app, test_user, test_workspace):
         """Test that non-existent document returns 404."""
@@ -308,49 +335,53 @@ class TestDocumentStreamingAPI:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get(
                 f"/api/workspaces/{test_workspace.workspace_id}/docs/9999/file",
-                params={"user_id": test_user.user_id}
+                params={"user_id": test_user.user_id},
             )
-        
+
         assert response.status_code == 404
-    
+
     @pytest.mark.asyncio
-    async def test_stream_document_not_ready(self, test_app, test_user, test_workspace, test_document_not_ready):
+    async def test_stream_document_not_ready(
+        self, test_app, test_user, test_workspace, test_document_not_ready
+    ):
         """Test that non-ready document returns 409."""
         transport = ASGITransport(app=test_app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get(
                 f"/api/workspaces/{test_workspace.workspace_id}/docs/{test_document_not_ready.doc_id}/file",
-                params={"user_id": test_user.user_id}
+                params={"user_id": test_user.user_id},
             )
-        
+
         assert response.status_code == 409
-    
+
     @pytest.mark.asyncio
-    async def test_stream_range_at_boundaries(self, test_app, test_user, test_workspace, test_document):
+    async def test_stream_range_at_boundaries(
+        self, test_app, test_user, test_workspace, test_document
+    ):
         """Test range requests at file boundaries."""
         transport = ASGITransport(app=test_app)
         file_size = len(TEST_PDF_CONTENT)
-        
+
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             # Last byte
             response = await client.get(
                 f"/api/workspaces/{test_workspace.workspace_id}/docs/{test_document.doc_id}/file",
                 params={"user_id": test_user.user_id},
-                headers={"Range": f"bytes={file_size-1}-{file_size-1}"}
+                headers={"Range": f"bytes={file_size-1}-{file_size-1}"},
             )
-        
+
         assert response.status_code == 206
         assert len(response.content) == 1
         assert response.content == TEST_PDF_CONTENT[-1:]
-        
+
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             # First byte
             response = await client.get(
                 f"/api/workspaces/{test_workspace.workspace_id}/docs/{test_document.doc_id}/file",
                 params={"user_id": test_user.user_id},
-                headers={"Range": "bytes=0-0"}
+                headers={"Range": "bytes=0-0"},
             )
-        
+
         assert response.status_code == 206
         assert len(response.content) == 1
         assert response.content == TEST_PDF_CONTENT[0:1]
