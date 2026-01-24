@@ -32,6 +32,8 @@ from pdf_ai_agent.api.schemas.document_schemas import (
     DocListResponse,
     DocListItem,
     DocMetadataResponse,
+    DocPagesMetadataResponse,
+    PageMetadataItem,
 )
 from pdf_ai_agent.storage.local_storage import LocalStorageService, get_storage_service
 from pdf_ai_agent.jobs.job_queue import JobQueueService, get_job_queue_service
@@ -518,4 +520,90 @@ async def stream_document_file(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="STORAGE_READ_FAILED",
+        )
+
+
+@router.get(
+    "/{workspace_id}/docs/{doc_id}/pages",
+    response_model=DocPagesMetadataResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        403: {
+            "model": DocErrorResponse,
+            "description": "Forbidden - no access to workspace",
+        },
+        404: {
+            "model": DocErrorResponse,
+            "description": "Document not found in workspace",
+        },
+        409: {
+            "model": DocErrorResponse,
+            "description": "Document metadata not ready - DOC_PARSE_METADATA hasn't finished",
+        },
+        500: {"model": DocErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_document_pages_metadata(
+    workspace_id: int = Path(..., description="Workspace ID", gt=0),
+    doc_id: int = Path(..., description="Document ID", gt=0),
+    user_id: int = Query(..., description="User ID (dev mode)"),
+    doc_service: DocumentService = Depends(get_document_service),
+):
+    """
+    Get document pages metadata for PDF rendering.
+
+    **Authentication (Dev Mode):**
+    - Requires `user_id` in query parameter
+    - Production mode would use JWT token authentication
+
+    **Authorization:**
+    - User must have access to the workspace (member+)
+    - Document must exist in the specified workspace
+    - Document must be in READY status
+
+    **Use Cases:**
+    - PDF Viewer initialization (page count, dimensions for virtual scrolling)
+    - Selection/Anchor highlighting (coordinate system alignment)
+    - Enable/disable text selection based on text_layer_available
+
+    **Returns:**
+    - 200: Pages metadata with dimensions, rotation, and text layer info
+    - 403: No access to workspace
+    - 404: Document not found
+    - 409: Document not ready - metadata parsing incomplete
+    - 500: Server error
+
+    **Fields:**
+    - page: 1-based page number (PDF standard)
+    - width_pt, height_pt: Page dimensions in PDF points (1/72 inch)
+    - rotation: Page rotation in degrees (0, 90, 180, 270)
+    - text_layer_available: Whether page has extractable text (not a scan)
+    """
+    try:
+        # Get document and pages metadata
+        doc, pages = await doc_service.get_document_pages_metadata(
+            workspace_id=workspace_id, doc_id=doc_id, user_id=user_id
+        )
+
+        # Convert to response format
+        page_items = [
+            PageMetadataItem(
+                page=page.page,
+                width_pt=page.width_pt,
+                height_pt=page.height_pt,
+                rotation=page.rotation,
+                text_layer_available=page.text_layer_available,
+            )
+            for page in pages
+        ]
+
+        return DocPagesMetadataResponse(doc_id=doc.doc_id, pages=page_items)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in get_document_pages_metadata: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred",
         )

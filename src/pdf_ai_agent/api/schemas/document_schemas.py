@@ -132,3 +132,62 @@ class DocMetadataResponse(BaseModel):
             }
         }
     }
+
+
+class PageMetadataItem(BaseModel):
+    """Schema for a single page metadata."""
+    page: int = Field(..., description="Page number (1-based index)", ge=1)
+    width_pt: float = Field(..., description="Page width in points (1/72 inch)")
+    height_pt: float = Field(..., description="Page height in points (1/72 inch)")
+    rotation: int = Field(..., description="Page rotation in degrees (0, 90, 180, or 270)")
+    text_layer_available: bool = Field(..., description="Whether the page has extractable text layer")
+    
+    @field_validator('rotation')
+    @classmethod
+    def validate_rotation(cls, v: int) -> int:
+        """Validate rotation is one of 0, 90, 180, 270."""
+        if v not in [0, 90, 180, 270]:
+            raise ValueError('Rotation must be one of 0, 90, 180, or 270')
+        return v
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "page": 1,
+                "width_pt": 595.0,
+                "height_pt": 842.0,
+                "rotation": 0,
+                "text_layer_available": True
+            }
+        }
+    }
+
+
+class DocPagesMetadataResponse(BaseModel):
+    """Response schema for document pages metadata."""
+    doc_id: int = Field(..., description="Document ID")
+    pages: List[PageMetadataItem] = Field(..., description="List of page metadata")
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "doc_id": 123,
+                "pages": [
+                    {
+                        "page": 1,
+                        "width_pt": 595.0,
+                        "height_pt": 842.0,
+                        "rotation": 0,
+                        "text_layer_available": True
+                    },
+                    {
+                        "page": 2,
+                        "width_pt": 595.0,
+                        "height_pt": 842.0,
+                        "rotation": 0,
+                        "text_layer_available": True
+                    }
+                ]
+            }
+        }
+    }
