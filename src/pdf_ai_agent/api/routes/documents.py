@@ -16,7 +16,9 @@ from fastapi import (
     Request,
     Response,
     status,
+    Header,
 )
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pdf_ai_agent.config.database.init_database import get_db_session
@@ -373,4 +375,140 @@ async def get_document_metadata(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="DB_READ_FAILED"
+        )
+
+
+@router.get(
+    "/{workspace_id}/docs/{doc_id}/file",
+    status_code=status.HTTP_200_OK,
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "description": "Full file content",
+            "content": {"application/pdf": {}},
+        },
+        206: {
+            "description": "Partial content (Range request)",
+            "content": {"application/pdf": {}},
+        },
+        403: {
+            "model": DocErrorResponse,
+            "description": "Forbidden - no access to workspace"
+        },
+        404: {
+            "model": DocErrorResponse,
+            "description": "Document not found in workspace"
+        },
+        409: {
+            "model": DocErrorResponse,
+            "description": "Document not ready"
+        },
+        416: {
+            "description": "Range Not Satisfiable",
+            "content": {"application/json": {}},
+        },
+        500: {
+            "model": DocErrorResponse,
+            "description": "Storage read failed"
+        },
+    }
+)
+async def stream_document_file(
+    workspace_id: int = Path(..., description="Workspace ID", gt=0),
+    doc_id: int = Path(..., description="Document ID", gt=0),
+    user_id: int = Query(..., description="User ID (dev mode)"),
+    range_header: Optional[str] = Header(None, alias="Range"),
+    doc_service: DocumentService = Depends(get_document_service),
+):
+    """
+    Stream PDF file with HTTP Range support.
+    
+    **Authentication (Dev Mode):**
+    - Requires `user_id` in query parameter
+    - Production mode would use JWT token authentication
+    
+    **Authorization:**
+    - User must have access to the workspace (member+)
+    - Document must exist in the specified workspace
+    - Document must be in READY status
+    
+    **Range Support:**
+    - Supports `bytes=start-end` (inclusive range)
+    - Supports `bytes=start-` (from start to end of file)
+    - Supports `bytes=-suffix` (last suffix bytes)
+    - Does NOT support multiple ranges (returns 416)
+    
+    **Response:**
+    - 200: Full file (no Range header)
+    - 206: Partial content (valid Range header)
+    - 403: No access to workspace
+    - 404: Document not found
+    - 409: Document not ready
+    - 416: Invalid range
+    - 500: Storage error
+    
+    **Headers:**
+    - Always includes: `Accept-Ranges: bytes`, `Content-Type: application/pdf`
+    - For 206: Includes `Content-Range: bytes start-end/total`
+    - For 416: Includes `Content-Range: bytes */total`
+    """
+    try:
+        # Get document and parse range
+        doc, range_tuple, file_size = await doc_service.stream_document_file(
+            workspace_id=workspace_id,
+            doc_id=doc_id,
+            user_id=user_id,
+            range_header=range_header
+        )
+        
+        # If range header was provided but parsing failed, return 416
+        if range_header and range_tuple is None:
+            return Response(
+                status_code=status.HTTP_416_RANGE_NOT_SATISFIABLE,
+                headers={
+                    "Content-Range": f"bytes */{file_size}",
+                    "Accept-Ranges": "bytes",
+                },
+                content=None
+            )
+        
+        # Prepare response headers
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Type": "application/pdf",
+            "Content-Disposition": f'inline; filename="{doc.filename}"',
+        }
+        
+        # If no range requested, stream entire file
+        if range_tuple is None:
+            start, end = 0, file_size - 1
+            response_status = status.HTTP_200_OK
+            headers["Content-Length"] = str(file_size)
+        else:
+            # Range requested
+            start, end = range_tuple
+            response_status = status.HTTP_206_PARTIAL_CONTENT
+            content_length = end - start + 1
+            headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+            headers["Content-Length"] = str(content_length)
+        
+        # Create streaming response
+        return StreamingResponse(
+            doc_service.get_file_stream(
+                storage_uri=doc.storage_uri,
+                start=start,
+                end=end
+            ),
+            status_code=response_status,
+            headers=headers,
+            media_type="application/pdf"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in stream_document_file: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="STORAGE_READ_FAILED"
         )

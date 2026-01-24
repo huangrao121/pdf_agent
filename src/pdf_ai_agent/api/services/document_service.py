@@ -4,7 +4,7 @@ Document service for handling PDF upload and management.
 import logging
 import json
 import base64
-from typing import BinaryIO, Tuple, Optional, List, Dict, Any
+from typing import BinaryIO, Tuple, Optional, List, Dict, Any, AsyncIterator
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
@@ -423,3 +423,130 @@ class DocumentService:
             )
         
         return doc
+    
+    async def stream_document_file(
+        self,
+        workspace_id: int,
+        doc_id: int,
+        user_id: int,
+        range_header: Optional[str] = None,
+        chunk_size: int = 512 * 1024  # 512KB chunks
+    ) -> Tuple[DocsModel, Optional[Tuple[int, int]], int]:
+        """
+        Get document and prepare for streaming with range support.
+        
+        Args:
+            workspace_id: Workspace ID
+            doc_id: Document ID
+            user_id: User ID
+            range_header: Optional HTTP Range header value
+            chunk_size: Chunk size for streaming (default 512KB)
+        
+        Returns:
+            Tuple of (document, range_tuple, file_size)
+            - document: Document model
+            - range_tuple: (start, end) if range requested, None otherwise
+            - file_size: Total file size in bytes
+        
+        Raises:
+            HTTPException: If validation fails or access denied
+        """
+        # 1. Check workspace access
+        has_access = await self._check_workspace_membership(workspace_id, user_id)
+        if not has_access:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="FORBIDDEN_WORKSPACE"
+            )
+        
+        # 2. Query document with workspace condition
+        query = select(DocsModel).where(
+            and_(
+                DocsModel.doc_id == doc_id,
+                DocsModel.workspace_id == workspace_id
+            )
+        )
+        
+        result = await self.db_session.execute(query)
+        doc = result.scalar_one_or_none()
+        
+        # 3. Return 404 if not found
+        if doc is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="DOC_NOT_FOUND"
+            )
+        
+        # 4. Check document status - must be READY
+        if doc.status != DocStatus.READY:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="DOC_NOT_READY"
+            )
+        
+        # 5. Get file size
+        try:
+            file_size = self.storage_service.get_file_size(doc.storage_uri)
+        except FileNotFoundError:
+            logger.error(f"File not found in storage: {doc.storage_uri}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="STORAGE_READ_FAILED"
+            )
+        except Exception as e:
+            logger.error(f"Failed to get file size: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="STORAGE_READ_FAILED"
+            )
+        
+        # 6. Parse range header if provided
+        range_tuple = None
+        if range_header:
+            range_tuple = self.storage_service.parse_range_header(
+                range_header, file_size
+            )
+            # If range parsing failed, it's an invalid range
+            # We'll handle this in the route to return 416
+        
+        return doc, range_tuple, file_size
+    
+    async def get_file_stream(
+        self,
+        storage_uri: str,
+        start: int,
+        end: int,
+        chunk_size: int = 512 * 1024  # 512KB chunks
+    ) -> AsyncIterator[bytes]:
+        """
+        Get async iterator for streaming file content.
+        
+        Args:
+            storage_uri: Storage URI
+            start: Start byte position (inclusive)
+            end: End byte position (inclusive)
+            chunk_size: Chunk size for streaming
+        
+        Yields:
+            Chunks of file data
+        
+        Raises:
+            HTTPException: If file read fails
+        """
+        try:
+            async for chunk in self.storage_service.stream_file_range(
+                storage_uri, start, end, chunk_size
+            ):
+                yield chunk
+        except FileNotFoundError:
+            logger.error(f"File not found in storage: {storage_uri}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="STORAGE_READ_FAILED"
+            )
+        except Exception as e:
+            logger.error(f"Failed to stream file: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="STORAGE_READ_FAILED"
+            )

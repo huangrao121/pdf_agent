@@ -6,8 +6,9 @@ Provides streaming write capabilities to avoid memory issues with large files.
 import os
 import hashlib
 import shutil
+import re
 from pathlib import Path
-from typing import BinaryIO, Tuple
+from typing import BinaryIO, Tuple, Optional, AsyncIterator
 from datetime import datetime
 
 
@@ -144,6 +145,149 @@ class LocalStorageService:
         """
         relative_path = storage_uri.replace("local://", "")
         return self.base_path / relative_path
+    
+    def get_file_size(self, storage_uri: str) -> int:
+        """
+        Get file size from storage.
+        
+        Args:
+            storage_uri: Storage URI
+        
+        Returns:
+            File size in bytes
+        
+        Raises:
+            FileNotFoundError: If file doesn't exist
+        """
+        file_path = self.get_file_path(storage_uri)
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {storage_uri}")
+        return file_path.stat().st_size
+    
+    @staticmethod
+    def parse_range_header(
+        range_header: str, 
+        file_size: int
+    ) -> Optional[Tuple[int, int]]:
+        """
+        Parse HTTP Range header and return (start, end) byte positions.
+        
+        Supports:
+        - bytes=start-end (inclusive range)
+        - bytes=start- (from start to end of file)
+        - bytes=-suffix (last suffix bytes)
+        
+        Does NOT support:
+        - Multiple ranges (returns None)
+        
+        Args:
+            range_header: Range header value (e.g., "bytes=0-1023")
+            file_size: Total file size in bytes
+        
+        Returns:
+            Tuple of (start, end) inclusive, or None if invalid/unsupported
+        
+        Examples:
+            >>> parse_range_header("bytes=0-999", 2000)
+            (0, 999)
+            >>> parse_range_header("bytes=1000-", 2000)
+            (1000, 1999)
+            >>> parse_range_header("bytes=-500", 2000)
+            (1500, 1999)
+        """
+        if not range_header or not range_header.startswith("bytes="):
+            return None
+        
+        range_spec = range_header[6:]  # Remove "bytes="
+        
+        # Check for multiple ranges (not supported in MVP)
+        if "," in range_spec:
+            return None
+        
+        # Match patterns: start-end, start-, -suffix
+        match = re.match(r"^(\d+)?-(\d+)?$", range_spec)
+        if not match:
+            return None
+        
+        start_str, end_str = match.groups()
+        
+        # Handle suffix range: bytes=-suffix
+        if start_str is None and end_str is not None:
+            suffix = int(end_str)
+            if suffix == 0:
+                return None  # Invalid: bytes=-0
+            if suffix >= file_size:
+                # Client wants last N bytes but file is smaller
+                # Return entire file
+                return (0, file_size - 1)
+            return (file_size - suffix, file_size - 1)
+        
+        # Handle start-end or start-
+        start = int(start_str) if start_str else 0
+        
+        # Validate start position
+        if start < 0 or start >= file_size:
+            return None  # Invalid range
+        
+        # Handle bytes=start-end
+        if end_str is not None:
+            end = int(end_str)
+            if end < start:
+                return None  # Invalid: end before start
+            # Clamp end to file size
+            end = min(end, file_size - 1)
+            return (start, end)
+        
+        # Handle bytes=start- (to end of file)
+        return (start, file_size - 1)
+    
+    async def stream_file_range(
+        self,
+        storage_uri: str,
+        start: int,
+        end: int,
+        chunk_size: int = 512 * 1024  # 512KB chunks
+    ) -> AsyncIterator[bytes]:
+        """
+        Stream a range of bytes from a file.
+        
+        Args:
+            storage_uri: Storage URI
+            start: Start byte position (inclusive)
+            end: End byte position (inclusive)
+            chunk_size: Size of chunks to read (default 512KB)
+        
+        Yields:
+            Chunks of file data
+        
+        Raises:
+            FileNotFoundError: If file doesn't exist
+        """
+        file_path = self.get_file_path(storage_uri)
+        if not file_path.exists():
+            raise FileNotFoundError(f"File not found: {storage_uri}")
+        
+        # Calculate total bytes to read
+        total_bytes = end - start + 1
+        bytes_read = 0
+        
+        # Read file in chunks
+        with open(file_path, 'rb') as f:
+            # Seek to start position
+            f.seek(start)
+            
+            while bytes_read < total_bytes:
+                # Calculate chunk size for this iteration
+                bytes_remaining = total_bytes - bytes_read
+                current_chunk_size = min(chunk_size, bytes_remaining)
+                
+                # Read chunk
+                chunk = f.read(current_chunk_size)
+                if not chunk:
+                    break
+                
+                bytes_read += len(chunk)
+                yield chunk
 
 
 # Global storage service instance
