@@ -2,6 +2,7 @@
 Document routes for PDF upload and management.
 """
 import logging
+import hashlib
 from typing import Optional
 from fastapi import (
     APIRouter, 
@@ -12,6 +13,8 @@ from fastapi import (
     HTTPException,
     Path,
     Query,
+    Request,
+    Response,
     status,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,12 +27,32 @@ from pdf_ai_agent.api.schemas.document_schemas import (
     DocErrorResponse,
     DocListResponse,
     DocListItem,
+    DocMetadataResponse,
 )
 from pdf_ai_agent.storage.local_storage import LocalStorageService, get_storage_service
 from pdf_ai_agent.jobs.job_queue import JobQueueService, get_job_queue_service
 
 router = APIRouter(prefix="/api/workspaces", tags=["Documents"])
 logger = logging.getLogger(__name__)
+
+
+def compute_etag(status: str, num_pages: Optional[int], updated_at: str) -> str:
+    """
+    Compute ETag for document metadata.
+    
+    Args:
+        status: Document status
+        num_pages: Number of pages (can be None)
+        updated_at: Updated timestamp in ISO format
+    
+    Returns:
+        ETag value (SHA256 hash)
+    """
+    # Combine the values into a string
+    etag_input = f"{status}|{num_pages}|{updated_at}"
+    # Compute SHA256 hash
+    etag_hash = hashlib.sha256(etag_input.encode('utf-8')).hexdigest()
+    return etag_hash
 
 
 # Status mapping constant
@@ -235,4 +258,119 @@ async def list_documents(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred"
+        )
+
+
+@router.get(
+    "/{workspace_id}/docs/{doc_id}/metadata",
+    response_model=DocMetadataResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        304: {
+            "description": "Not Modified - content hasn't changed"
+        },
+        404: {
+            "model": DocErrorResponse,
+            "description": "Document not found in workspace"
+        },
+        403: {
+            "model": DocErrorResponse,
+            "description": "Forbidden - no access to workspace"
+        },
+        500: {
+            "model": DocErrorResponse,
+            "description": "Internal server error"
+        },
+    }
+)
+async def get_document_metadata(
+    request: Request,
+    response: Response,
+    workspace_id: int = Path(..., description="Workspace ID", gt=0),
+    doc_id: int = Path(..., description="Document ID", gt=0),
+    user_id: int = Query(..., description="User ID (dev mode)"),
+    doc_service: DocumentService = Depends(get_document_service),
+):
+    """
+    Get document metadata by ID.
+    
+    **Authentication (Dev Mode):**
+    - Requires `user_id` in query parameter
+    - Production mode would use JWT token authentication
+    
+    **Authorization:**
+    - User must have access to the workspace
+    - Document must exist in the specified workspace
+    
+    **ETag Support:**
+    - Returns `ETag` header computed from status, num_pages, and updated_at
+    - Supports `If-None-Match` header for conditional requests
+    - Returns 304 Not Modified if content hasn't changed
+    
+    **Returns:**
+    - 200: Document metadata with full details
+    - 304: Not Modified (when ETag matches)
+    - 403: No access to workspace
+    - 404: Document not found in workspace
+    - 500: Server error
+    """
+    try:
+        # Get document metadata
+        doc = await doc_service.get_document_metadata(
+            workspace_id=workspace_id,
+            doc_id=doc_id,
+            user_id=user_id
+        )
+        
+        # Get status value
+        status_value = doc.status.value if hasattr(doc.status, 'value') else doc.status
+        
+        # Compute ETag
+        etag_value = compute_etag(
+            status=status_value,
+            num_pages=doc.num_pages,
+            updated_at=doc.updated_at.isoformat()
+        )
+        
+        # Check If-None-Match header
+        if_none_match = request.headers.get("If-None-Match")
+        if if_none_match:
+            # Remove quotes if present
+            if_none_match = if_none_match.strip('"')
+            if if_none_match == etag_value:
+                # Return 304 Not Modified with ETag header
+                # For 304, we need to return a Response object directly
+                return Response(
+                    status_code=status.HTTP_304_NOT_MODIFIED,
+                    headers={"ETag": f'"{etag_value}"'}
+                )
+        
+        # Set ETag header
+        response.headers["ETag"] = f'"{etag_value}"'
+        
+        # Return document metadata
+        return DocMetadataResponse(
+            doc_id=doc.doc_id,
+            filename=doc.filename,
+            file_type=doc.file_type,
+            file_size=doc.file_size,
+            file_sha256=doc.file_sha256,
+            title=doc.title,
+            author=doc.author,
+            description=doc.description,
+            language=doc.language,
+            status=status_value.upper(),
+            error_message=doc.error_message,
+            num_pages=doc.num_pages,
+            created_at=doc.created_at,
+            updated_at=doc.updated_at
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in get_document_metadata: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="DB_READ_FAILED"
         )
