@@ -4,7 +4,8 @@ from sqlalchemy.dialects.postgresql import BIGINT as BigInteger
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy import (
     Enum,
-    Any
+    Any,
+    CheckConstraint
 )
 from sqlalchemy import Index
 
@@ -132,6 +133,8 @@ class DocPageModel(Base, CreatedMixin):
     __table_args__ = (
         # 复合唯一索引：doc_id + page 确保每页唯一
         Index('idx_doc_pages_doc_id_page', 'doc_id', 'page', unique=True),
+        # 检查约束：确保页码为正数
+        CheckConstraint('page > 0', name='ck_doc_page_positive'),
     )
 
     # 主键
@@ -172,6 +175,8 @@ class ChunksModel(Base, TimestampMixin):
         Index('idx_doc_chunks_doc_id_chunk_index', 'doc_id', 'chunk_index', unique=True),
         # 用于快速查找相同文本的分块（去重）
         Index('idx_doc_chunks_text_sha256', 'text_sha256'),
+        CheckConstraint('page_start > 0', name='ck_doc_chunk_page_start_positive'),
+        CheckConstraint('page_end > 0', name='ck_doc_chunk_page_end_positive'),
     )
 
     # 主键
@@ -276,23 +281,36 @@ class AnchorModel(Base, TimestampMixin):
     - 支持点击笔记中的引用直接跳转到 PDF 对应位置
     """
     __tablename__ = 'doc_anchor'
+    __table_args__ = (
+        CheckConstraint('page > 0', name='ck_anchor_page_positive'),
+        Index('idx_anchor_note_doc_chunk_page_quoted_text', 'doc_id', 'created_by_user_id', 'locator_hash', unique = True),
+        Index('idx_anchor_doc_workspace_page', 'doc_id', 'workspace_id', 'page')
+    )
 
     # 主键
     anchor_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     
+    created_by_user_id: Mapped[BigInteger] = mapped_column(
+        ForeignKey('users.user_id'), nullable=False, index=True
+    )  # 创建者用户 ID
     # 外键 - 三方关联
     note_id: Mapped[int] = mapped_column(Integer, ForeignKey('doc_note.note_id'), nullable=True, index=True)
     doc_id: Mapped[int] = mapped_column(Integer, ForeignKey('doc.doc_id'), nullable=False, index=True)
-    chunk_id: Mapped[int] = mapped_column(Integer, ForeignKey('doc_chunk.chunk_id'), nullable=False, index=True)
-
+    chunk_id: Mapped[int] = mapped_column(Integer, ForeignKey('doc_chunk.chunk_id'), nullable=True, index=True)
+    workspace_id: Mapped[int] = mapped_column(Integer, ForeignKey('workspaces.workspace_id'), nullable=False)
     # 定位信息
     page: Mapped[int] = mapped_column(Integer, nullable=True)  # 页码（快速定位）
     quoted_text: Mapped[str] = mapped_column(
         Text, nullable=True
     )  # 用户引用的原文片段（用于在笔记中显示）
     locator: Mapped[Optional[dict[str, Any]]] = mapped_column(
-        JSONB, nullable=True
+        JSONB, nullable=False
     )  # 精确定位器 {"bbox": {...}, "offset": {...}}，用于 PDF 高亮和跳转
+
+    # 幂等
+    locator_hash: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )  # 定位器哈希，用于幂等插入相同锚点
 
     # Relationships
     doc: Mapped["DocsModel"] = relationship(
@@ -306,6 +324,12 @@ class AnchorModel(Base, TimestampMixin):
     chunk: Mapped["ChunksModel"] = relationship(
         "ChunksModel",
         back_populates="anchors",
+    )
+    user: Mapped["UserModel"] = relationship(
+        "UserModel",
+    )
+    workspace: Mapped["WorkspaceModel"] = relationship(
+        "WorkspaceModel",
     )
 
 class ChatSessionModel(Base, CreatedMixin):

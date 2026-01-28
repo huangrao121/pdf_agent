@@ -37,7 +37,10 @@ dev = [
 
 [tool.setuptools]
 package-dir = {"" = "src"}
-packages = ["pdf_ai_agent"]  # 自动发现 src/pdf_ai_agent 及其子包
+
+# 开启自动发现模式
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
