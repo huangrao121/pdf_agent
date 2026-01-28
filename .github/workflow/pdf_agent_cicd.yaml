@@ -1,0 +1,38 @@
+name: CICD_pipeline_for_PDF_Agent
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  check_and_test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Install UV
+        uses: astral-sh/setup-uv@v5
+        with:
+          uv-version: 'latest'
+          enable-cache: true
+
+
+      # set up Python environment
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: uv sync --dev
+
+      - name: Run unit tests
+        run: uv run pytest test/unit_test
+
+      - name: Run integration tests
+        run: uv run pytest test/integration_test

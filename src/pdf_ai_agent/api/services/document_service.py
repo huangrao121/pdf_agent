@@ -13,6 +13,7 @@ from fastapi import HTTPException, status
 
 from pdf_ai_agent.config.database.models.model_document import (
     DocsModel,
+    DocPageModel,
     DocStatus,
     JobTypeEnum,
 )
@@ -533,3 +534,59 @@ class DocumentService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="STORAGE_READ_FAILED",
             )
+
+    async def get_document_pages_metadata(
+        self, workspace_id: int, doc_id: int, user_id: int
+    ) -> Tuple[DocsModel, List[DocPageModel]]:
+        """
+        Get document pages metadata by ID.
+
+        Args:
+            workspace_id: Workspace ID
+            doc_id: Document ID
+            user_id: User ID
+
+        Returns:
+            Tuple of (document model, list of page models)
+
+        Raises:
+            HTTPException: If validation fails or access denied
+        """
+        # 1. Check workspace access
+        has_access = await self._check_workspace_membership(workspace_id, user_id)
+        if not has_access:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="FORBIDDEN_WORKSPACE"
+            )
+
+        # 2. Query document with workspace condition
+        query = select(DocsModel).where(
+            and_(DocsModel.doc_id == doc_id, DocsModel.workspace_id == workspace_id)
+        )
+
+        result = await self.db_session.execute(query)
+        doc = result.scalar_one_or_none()
+
+        # 3. Return 404 if not found
+        if doc is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="DOC_NOT_FOUND"
+            )
+
+        # 4. Check document status - must be READY
+        if doc.status != DocStatus.READY:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="DOC_NOT_READY"
+            )
+
+        # 5. Fetch pages metadata ordered by page number
+        pages_query = (
+            select(DocPageModel)
+            .where(DocPageModel.doc_id == doc_id)
+            .order_by(DocPageModel.page.asc())
+        )
+
+        pages_result = await self.db_session.execute(pages_query)
+        pages = list(pages_result.scalars().all())
+
+        return doc, pages
