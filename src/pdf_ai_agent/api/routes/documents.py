@@ -636,10 +636,10 @@ async def get_document_pages_metadata(
     },
 )
 async def create_anchor(
+    request: CreateAnchorRequest,
     workspace_id: int = Path(..., description="Workspace ID", gt=0),
     doc_id: int = Path(..., description="Document ID", gt=0),
     user_id: int = Query(..., description="User ID (dev mode)"),
-    request: CreateAnchorRequest = None,
     doc_service: DocumentService = Depends(get_document_service),
 ):
     """
@@ -668,11 +668,10 @@ async def create_anchor(
 
     **Idempotency:**
     - Uses SHA256 hash of canonical_json(locator) + "|" + quoted_text
-    - Returns existing anchor if already created (200 OK)
+    - Returns existing anchor if already created (same 201 status)
 
     **Returns:**
-    - 201: Anchor created successfully
-    - 200: Anchor already exists (idempotent)
+    - 201: Anchor created successfully (or already exists)
     - 400: Invalid request (validation errors)
     - 403: No access to workspace
     - 404: Document not found

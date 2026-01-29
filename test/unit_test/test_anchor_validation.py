@@ -2,7 +2,6 @@
 Unit tests for anchor locator validation.
 """
 import pytest
-import math
 from pydantic import ValidationError
 
 from pdf_ai_agent.api.schemas.document_schemas import (
@@ -118,6 +117,17 @@ class TestAnchorLocatorValidation:
             )
         assert "greater than or equal to 1" in str(exc_info.value)
 
+    def test_empty_quads_invalid(self):
+        """Test empty quads list fails validation."""
+        with pytest.raises(ValidationError) as exc_info:
+            AnchorLocator(
+                type="pdf_quadpoints",
+                coord_space="pdf_points",
+                page=12,
+                quads=[],  # Empty list
+            )
+        assert "at least 1" in str(exc_info.value).lower()
+
 
 class TestCreateAnchorRequestValidation:
     """Test CreateAnchorRequest validation logic."""
@@ -186,3 +196,19 @@ class TestCreateAnchorRequestValidation:
                 ),
             )
         assert "greater than or equal to 1" in str(exc_info.value)
+
+    def test_empty_quoted_text_fails(self):
+        """Test empty quoted_text fails validation."""
+        with pytest.raises(ValidationError) as exc_info:
+            CreateAnchorRequest(
+                doc_id=22222,
+                page=12,
+                quoted_text="",  # Empty string
+                locator=AnchorLocator(
+                    type="pdf_quadpoints",
+                    coord_space="pdf_points",
+                    page=12,
+                    quads=[[72.1, 512.3, 310.4, 512.3, 310.4, 498.2, 72.1, 498.2]],
+                ),
+            )
+        assert "at least 1" in str(exc_info.value).lower()

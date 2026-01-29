@@ -1,6 +1,7 @@
 """
 Pydantic schemas for document-related API endpoints.
 """
+import math
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List
 from datetime import datetime
@@ -198,7 +199,7 @@ class AnchorLocator(BaseModel):
     type: str = Field(..., description="Locator type (e.g., 'pdf_quadpoints')")
     coord_space: str = Field(..., description="Coordinate space (e.g., 'pdf_points')")
     page: int = Field(..., description="Page number (1-based index)", ge=1)
-    quads: List[List[float]] = Field(..., description="List of quadpoints, each with 8 coordinates")
+    quads: List[List[float]] = Field(..., min_length=1, description="List of quadpoints, each with 8 coordinates")
     
     @field_validator('type')
     @classmethod
@@ -220,7 +221,6 @@ class AnchorLocator(BaseModel):
     @classmethod
     def validate_quads(cls, v: List[List[float]]) -> List[List[float]]:
         """Validate quadpoints format."""
-        import math
         for quad in v:
             if len(quad) != 8:
                 raise ValueError('Each quad must have exactly 8 numbers')
@@ -248,7 +248,7 @@ class CreateAnchorRequest(BaseModel):
     chunk_id: Optional[int] = Field(None, description="Chunk ID (optional, for future use)")
     doc_id: int = Field(..., description="Document ID")
     page: int = Field(..., description="Page number (1-based index)", ge=1)
-    quoted_text: str = Field(..., description="Quoted text from the document")
+    quoted_text: str = Field(..., min_length=1, description="Quoted text from the document")
     locator: AnchorLocator = Field(..., description="Locator information for precise positioning")
     
     @field_validator('locator')
