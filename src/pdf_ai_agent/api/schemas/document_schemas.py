@@ -191,3 +191,102 @@ class DocPagesMetadataResponse(BaseModel):
             }
         }
     }
+
+
+class AnchorLocator(BaseModel):
+    """Locator schema for anchor positioning."""
+    type: str = Field(..., description="Locator type (e.g., 'pdf_quadpoints')")
+    coord_space: str = Field(..., description="Coordinate space (e.g., 'pdf_points')")
+    page: int = Field(..., description="Page number (1-based index)", ge=1)
+    quads: List[List[float]] = Field(..., description="List of quadpoints, each with 8 coordinates")
+    
+    @field_validator('type')
+    @classmethod
+    def validate_type(cls, v: str) -> str:
+        """Validate locator type."""
+        if v != "pdf_quadpoints":
+            raise ValueError('Locator type must be "pdf_quadpoints"')
+        return v
+    
+    @field_validator('coord_space')
+    @classmethod
+    def validate_coord_space(cls, v: str) -> str:
+        """Validate coordinate space."""
+        if v != "pdf_points":
+            raise ValueError('Coordinate space must be "pdf_points"')
+        return v
+    
+    @field_validator('quads')
+    @classmethod
+    def validate_quads(cls, v: List[List[float]]) -> List[List[float]]:
+        """Validate quadpoints format."""
+        import math
+        for quad in v:
+            if len(quad) != 8:
+                raise ValueError('Each quad must have exactly 8 numbers')
+            for num in quad:
+                if not math.isfinite(num):
+                    raise ValueError('All quad coordinates must be finite numbers')
+        return v
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "type": "pdf_quadpoints",
+                "coord_space": "pdf_points",
+                "page": 12,
+                "quads": [
+                    [72.1, 512.3, 310.4, 512.3, 310.4, 498.2, 72.1, 498.2]
+                ]
+            }
+        }
+    }
+
+
+class CreateAnchorRequest(BaseModel):
+    """Request schema for creating an anchor."""
+    chunk_id: Optional[int] = Field(None, description="Chunk ID (optional, for future use)")
+    doc_id: int = Field(..., description="Document ID")
+    page: int = Field(..., description="Page number (1-based index)", ge=1)
+    quoted_text: str = Field(..., description="Quoted text from the document")
+    locator: AnchorLocator = Field(..., description="Locator information for precise positioning")
+    
+    @field_validator('locator')
+    @classmethod
+    def validate_page_match(cls, v: AnchorLocator, info) -> AnchorLocator:
+        """Validate that locator.page matches body.page."""
+        if 'page' in info.data and v.page != info.data['page']:
+            raise ValueError('Locator page must match request page')
+        return v
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "chunk_id": 456,
+                "doc_id": 22222,
+                "page": 12,
+                "quoted_text": "The model uses scaled dot-product attention.",
+                "locator": {
+                    "type": "pdf_quadpoints",
+                    "coord_space": "pdf_points",
+                    "page": 12,
+                    "quads": [
+                        [72.1, 512.3, 310.4, 512.3, 310.4, 498.2, 72.1, 498.2]
+                    ]
+                }
+            }
+        }
+    }
+
+
+class CreateAnchorResponse(BaseModel):
+    """Response schema for anchor creation."""
+    anchor_id: int = Field(..., description="Anchor ID")
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "anchor_id": 789
+            }
+        }
+    }

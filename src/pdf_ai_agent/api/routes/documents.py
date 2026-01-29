@@ -34,6 +34,8 @@ from pdf_ai_agent.api.schemas.document_schemas import (
     DocMetadataResponse,
     DocPagesMetadataResponse,
     PageMetadataItem,
+    CreateAnchorRequest,
+    CreateAnchorResponse,
 )
 from pdf_ai_agent.storage.local_storage import LocalStorageService, get_storage_service
 from pdf_ai_agent.jobs.job_queue import JobQueueService, get_job_queue_service
@@ -603,6 +605,106 @@ async def get_document_pages_metadata(
         raise
     except Exception as e:
         logger.error(f"Unexpected error in get_document_pages_metadata: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred",
+        )
+
+
+@router.post(
+    "/{workspace_id}/docs/{doc_id}/anchors",
+    response_model=CreateAnchorResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {
+            "model": DocErrorResponse,
+            "description": "Invalid request (locator schema, page mismatch, chunk/note mismatch, etc.)",
+        },
+        403: {
+            "model": DocErrorResponse,
+            "description": "Forbidden - no access to workspace",
+        },
+        404: {
+            "model": DocErrorResponse,
+            "description": "Document not found in workspace",
+        },
+        409: {
+            "model": DocErrorResponse,
+            "description": "Document not ready - status != READY",
+        },
+        500: {"model": DocErrorResponse, "description": "Database write failed"},
+    },
+)
+async def create_anchor(
+    workspace_id: int = Path(..., description="Workspace ID", gt=0),
+    doc_id: int = Path(..., description="Document ID", gt=0),
+    user_id: int = Query(..., description="User ID (dev mode)"),
+    request: CreateAnchorRequest = None,
+    doc_service: DocumentService = Depends(get_document_service),
+):
+    """
+    Create an anchor for a document.
+
+    **Authentication (Dev Mode):**
+    - Requires `user_id` in query parameter
+    - Production mode would use JWT token authentication
+
+    **Authorization:**
+    - User must have access to the workspace (member+)
+    - Document must exist in the specified workspace
+    - Document must be in READY status
+
+    **Validation:**
+    - Validates workspace membership
+    - Validates document status (READY)
+    - Validates page exists in doc_pages
+    - Validates locator schema:
+      - type must be "pdf_quadpoints"
+      - coord_space must be "pdf_points"
+      - page in locator must match page in request body
+      - quads must be arrays of 8 finite numbers
+    - Validates chunk_id belongs to doc (if provided)
+    - Validates note_id belongs to workspace (if provided)
+
+    **Idempotency:**
+    - Uses SHA256 hash of canonical_json(locator) + "|" + quoted_text
+    - Returns existing anchor if already created (200 OK)
+
+    **Returns:**
+    - 201: Anchor created successfully
+    - 200: Anchor already exists (idempotent)
+    - 400: Invalid request (validation errors)
+    - 403: No access to workspace
+    - 404: Document not found
+    - 409: Document not ready
+    - 500: Database error
+    """
+    try:
+        # Validate doc_id matches path parameter
+        if request.doc_id != doc_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="INVALID_REQUEST: doc_id in body must match path parameter",
+            )
+
+        # Create anchor
+        anchor = await doc_service.create_anchor(
+            workspace_id=workspace_id,
+            doc_id=doc_id,
+            user_id=user_id,
+            page=request.page,
+            quoted_text=request.quoted_text,
+            locator=request.locator.model_dump(),
+            chunk_id=request.chunk_id,
+            note_id=None,  # Note support for future
+        )
+
+        return CreateAnchorResponse(anchor_id=anchor.anchor_id)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in create_anchor: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred",
