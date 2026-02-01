@@ -5,10 +5,11 @@ Document service for handling PDF upload and management.
 import logging
 import json
 import base64
+import hashlib
 from typing import BinaryIO, Tuple, Optional, List, Dict, Any, AsyncIterator
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_, or_, exists
 from fastapi import HTTPException, status
 
 from pdf_ai_agent.config.database.models.model_document import (
@@ -16,6 +17,9 @@ from pdf_ai_agent.config.database.models.model_document import (
     DocPageModel,
     DocStatus,
     JobTypeEnum,
+    AnchorModel,
+    ChunksModel,
+    NoteModel,
 )
 from pdf_ai_agent.config.database.models.model_user import WorkspaceModel
 from pdf_ai_agent.storage.local_storage import LocalStorageService
@@ -590,3 +594,189 @@ class DocumentService:
         pages = list(pages_result.scalars().all())
 
         return doc, pages
+
+    @staticmethod
+    def compute_locator_hash(locator: Dict[str, Any], quoted_text: str) -> str:
+        """
+        Compute SHA256 hash of locator and quoted_text for idempotency.
+
+        Args:
+            locator: Locator dictionary
+            quoted_text: Quoted text string
+
+        Returns:
+            SHA256 hash string
+        """
+        # Create canonical JSON representation (sorted keys, no spaces)
+        canonical_json = json.dumps(locator, sort_keys=True, separators=(",", ":"))
+        # Combine locator and quoted_text with separator
+        hash_input = f"{canonical_json}|{quoted_text}"
+        # Compute SHA256
+        return hashlib.sha256(hash_input.encode("utf-8")).hexdigest()
+
+    async def create_anchor(
+        self,
+        workspace_id: int,
+        doc_id: int,
+        user_id: int,
+        page: int,
+        quoted_text: str,
+        locator: Dict[str, Any],
+        chunk_id: Optional[int] = None,
+        note_id: Optional[int] = None,
+    ) -> AnchorModel:
+        """
+        Create an anchor for a document.
+
+        Args:
+            workspace_id: Workspace ID
+            doc_id: Document ID
+            user_id: User ID
+            page: Page number
+            quoted_text: Quoted text from the document
+            locator: Locator information (dict)
+            chunk_id: Optional chunk ID
+            note_id: Optional note ID
+
+        Returns:
+            Created anchor model
+
+        Raises:
+            HTTPException: If validation fails or access denied
+        """
+        try:
+            # 1. Check workspace access
+            has_access = await self._check_workspace_membership(workspace_id, user_id)
+            if not has_access:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN, detail="FORBIDDEN_WORKSPACE"
+                )
+
+            # 2. Query document with workspace condition
+            query = select(DocsModel).where(
+                and_(DocsModel.doc_id == doc_id, DocsModel.workspace_id == workspace_id)
+            )
+            result = await self.db_session.execute(query)
+            doc = result.scalar_one_or_none()
+
+            # 3. Return 404 if not found
+            if doc is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail="DOC_NOT_FOUND"
+                )
+
+            # 4. Check document status - must be READY
+            if doc.status != DocStatus.READY:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, detail="DOC_NOT_READY"
+                )
+            
+            if locator.get("page") != page:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Locator page must match the provided page",
+                )
+
+            # 5. Verify page exists in doc_pages
+            page_query = select(
+                exists().where(
+                    and_(DocPageModel.doc_id == doc_id, DocPageModel.page == page)
+                )
+            )
+            page_result = await self.db_session.execute(page_query)
+            page_exists = page_result.scalar()
+
+            if not page_exists:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, detail="INVALID_PAGE"
+                )
+
+            # 6. Validate chunk_id if provided
+            if chunk_id is not None:
+                chunk_query = select(ChunksModel).where(
+                    and_(
+                        ChunksModel.chunk_id == chunk_id,
+                        ChunksModel.doc_id == doc_id,
+                    )
+                )
+                chunk_result = await self.db_session.execute(chunk_query)
+                chunk = chunk_result.scalar_one_or_none()
+
+                if chunk is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="CHUNK_DOC_MISMATCH",
+                    )
+
+            # 7. Validate note_id if provided
+            if note_id is not None:
+                note_query = select(NoteModel).where(
+                    and_(
+                        NoteModel.note_id == note_id,
+                        NoteModel.workspace_id == workspace_id,
+                    )
+                )
+                note_result = await self.db_session.execute(note_query)
+                note = note_result.scalar_one_or_none()
+
+                if note is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="NOTE_WORKSPACE_MISMATCH",
+                    )
+
+            # 8. Compute locator hash for idempotency
+            locator_hash = self.compute_locator_hash(locator, quoted_text)
+
+            # 9. Check if anchor already exists (idempotency)
+            existing_anchor_query = select(AnchorModel).where(
+                and_(
+                    AnchorModel.doc_id == doc_id,
+                    AnchorModel.created_by_user_id == user_id,
+                    AnchorModel.locator_hash == locator_hash,
+                )
+            )
+            existing_result = await self.db_session.execute(existing_anchor_query)
+            existing_anchor = existing_result.scalar_one_or_none()
+
+            if existing_anchor:
+                logger.info(
+                    f"Anchor already exists: anchor_id={existing_anchor.anchor_id}, "
+                    f"locator_hash={locator_hash}"
+                )
+                return existing_anchor
+
+            # 10. Create new anchor
+            anchor = AnchorModel(
+                doc_id=doc_id,
+                workspace_id=workspace_id,
+                created_by_user_id=user_id,
+                note_id=note_id,
+                chunk_id=chunk_id,
+                page=page,
+                quoted_text=quoted_text,
+                locator=locator,
+                locator_hash=locator_hash,
+            )
+
+            self.db_session.add(anchor)
+            await self.db_session.commit()
+            await self.db_session.refresh(anchor)
+
+            logger.info(
+                f"Anchor created successfully: anchor_id={anchor.anchor_id}, "
+                f"doc_id={doc_id}, page={page}"
+            )
+
+            return anchor
+
+        except HTTPException:
+            await self.db_session.rollback()
+            raise
+        except Exception as e:
+            await self.db_session.rollback()
+            logger.error(f"Anchor creation failed: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="DB_WRITE_FAILED",
+            )
