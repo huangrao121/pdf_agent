@@ -670,6 +670,12 @@ class DocumentService:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT, detail="DOC_NOT_READY"
                 )
+            
+            if locator.get("page") != page:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Locator page must match the provided page",
+                )
 
             # 5. Verify page exists in doc_pages
             page_query = select(

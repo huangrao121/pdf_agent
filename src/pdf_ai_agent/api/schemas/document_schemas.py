@@ -208,7 +208,7 @@ class AnchorLocator(BaseModel):
         if v != "pdf_quadpoints":
             raise ValueError('Locator type must be "pdf_quadpoints"')
         return v
-    
+
     @field_validator('coord_space')
     @classmethod
     def validate_coord_space(cls, v: str) -> str:

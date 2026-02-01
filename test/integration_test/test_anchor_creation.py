@@ -5,6 +5,9 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
+from fastapi import FastAPI
+from dotenv import load_dotenv
+
 from pdf_ai_agent.config.database.models.model_user import UserModel, WorkspaceModel
 from pdf_ai_agent.config.database.models.model_document import (
     DocsModel,
@@ -140,9 +143,8 @@ async def test_note(db_session, test_user, test_workspace, test_doc_ready):
 @pytest.fixture
 async def test_app(db_session):
     """Create test app with overridden dependencies."""
-    from main import create_app
-
-    app = create_app()
+    load_dotenv()
+    app = FastAPI(title="PDF_Agent")
 
     # Override db session dependency
     from pdf_ai_agent.config.database.init_database import get_db_session
@@ -151,6 +153,11 @@ async def test_app(db_session):
         yield db_session
 
     app.dependency_overrides[get_db_session] = override_get_db_session
+
+    # Register routers
+    from pdf_ai_agent.api.routes.documents import router as documents_router
+
+    app.include_router(documents_router)
 
     return app
 
