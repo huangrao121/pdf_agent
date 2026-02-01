@@ -780,3 +780,57 @@ class DocumentService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="DB_WRITE_FAILED",
             )
+
+    async def get_anchor(
+        self,
+        workspace_id: int,
+        doc_id: int,
+        anchor_id: int,
+        user_id: int,
+    ) -> AnchorModel:
+        """
+        Get anchor information by ID.
+
+        Args:
+            workspace_id: Workspace ID
+            doc_id: Document ID
+            anchor_id: Anchor ID
+            user_id: User ID
+
+        Returns:
+            Anchor model
+
+        Raises:
+            HTTPException: If validation fails, access denied, or anchor not found
+        """
+        # 1. Check workspace access
+        has_access = await self._check_workspace_membership(workspace_id, user_id)
+        if not has_access:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="FORBIDDEN_WORKSPACE"
+            )
+
+        # 2. Query anchor with workspace and doc_id conditions for security
+        query = select(AnchorModel).where(
+            and_(
+                AnchorModel.anchor_id == anchor_id,
+                AnchorModel.doc_id == doc_id,
+                AnchorModel.workspace_id == workspace_id,
+            )
+        )
+
+        result = await self.db_session.execute(query)
+        anchor = result.scalar_one_or_none()
+
+        # 3. Return 404 if not found or doesn't match workspace/doc_id
+        if anchor is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="ANCHOR_NOT_FOUND"
+            )
+
+        logger.info(
+            f"Anchor retrieved successfully: anchor_id={anchor_id}, "
+            f"doc_id={doc_id}, workspace_id={workspace_id}, user_id={user_id}"
+        )
+
+        return anchor
