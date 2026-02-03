@@ -290,3 +290,37 @@ class CreateAnchorResponse(BaseModel):
             }
         }
     }
+
+
+class GetAnchorResponse(BaseModel):
+    """Response schema for getting anchor info."""
+    anchor_id: int = Field(..., description="Anchor ID")
+    doc_id: int = Field(..., description="Document ID")
+    page: int = Field(..., description="Page number (1-based index)", ge=1)
+    chunk_id: Optional[int] = Field(None, description="Chunk ID (optional, for future use)")
+    note_id: Optional[int] = Field(None, description="Note ID (optional, for future use)")
+    quoted_text: str = Field(..., description="Quoted text from the document")
+    locator: dict = Field(..., description="Locator information for precise positioning")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "anchor_id": 123,
+                "doc_id": 456,
+                "page": 32,
+                "chunk_id": 789,
+                "note_id": 222,
+                "quoted_text": "this is text",
+                "locator": {
+                    "type": "pdf_quadpoints",
+                    "coord_space": "pdf_points",
+                    "page": 32,
+                    "quads": [
+                        [72.1, 512.3, 310.4, 512.3, 310.4, 498.2, 72.1, 498.2]
+                    ]
+                },
+                "created_at": "2026-01-27T23:12:00Z"
+            }
+        }
+    }

@@ -36,6 +36,7 @@ from pdf_ai_agent.api.schemas.document_schemas import (
     PageMetadataItem,
     CreateAnchorRequest,
     CreateAnchorResponse,
+    GetAnchorResponse,
 )
 from pdf_ai_agent.storage.local_storage import LocalStorageService, get_storage_service
 from pdf_ai_agent.jobs.job_queue import JobQueueService, get_job_queue_service
@@ -704,6 +705,116 @@ async def create_anchor(
         raise
     except Exception as e:
         logger.error(f"Unexpected error in create_anchor: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred",
+        )
+
+
+@router.get(
+    "/{workspace_id}/docs/{doc_id}/anchors/{anchor_id}",
+    response_model=GetAnchorResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        403: {
+            "model": DocErrorResponse,
+            "description": "Forbidden - no access to workspace",
+        },
+        404: {
+            "model": DocErrorResponse,
+            "description": "Anchor not found or doesn't belong to doc/workspace",
+        },
+        500: {"model": DocErrorResponse, "description": "Database read failed"},
+    },
+)
+async def get_anchor(
+    workspace_id: int = Path(..., description="Workspace ID", gt=0),
+    doc_id: int = Path(..., description="Document ID", gt=0),
+    anchor_id: int = Path(..., description="Anchor ID", gt=0),
+    user_id: int = Query(..., description="User ID (dev mode)"),
+    doc_service: DocumentService = Depends(get_document_service),
+):
+    """
+    Get anchor information by ID.
+
+    **Authentication (Dev Mode):**
+    - Requires `user_id` in query parameter
+    - Production mode would use JWT token authentication
+
+    **Authorization:**
+    - User must have access to the workspace (member+)
+    - Anchor must exist in the specified document and workspace
+
+    **Security:**
+    - Returns 404 if anchor doesn't exist OR doesn't belong to the workspace/doc
+    - This prevents enumeration attacks and leaking anchor existence
+
+    **Returns:**
+    - 200: Anchor information with page, locator, quoted_text, etc.
+    - 403: No access to workspace
+    - 404: Anchor not found or ownership mismatch
+    - 500: Database error
+
+    **Observability:**
+    - Logs: workspace_id, doc_id, anchor_id, user_id, status_code
+    - Metrics: anchor_get_total{status}, anchor_get_latency_ms
+    """
+    import time
+    start_time = time.time()
+    
+    try:
+        # Get anchor
+        anchor = await doc_service.get_anchor(
+            workspace_id=workspace_id,
+            doc_id=doc_id,
+            anchor_id=anchor_id,
+            user_id=user_id,
+        )
+
+        # Log success
+        latency_ms = (time.time() - start_time) * 1000
+        logger.info(
+            f"GET /api/workspaces/{workspace_id}/docs/{doc_id}/anchors/{anchor_id} "
+            f"- user_id={user_id}, status_code=200, latency_ms={latency_ms:.2f}"
+        )
+
+        # Check for invalid locator (missing required fields) - for observability
+        if anchor.locator:
+            required_fields = ["type", "coord_space", "page", "quads"]
+            missing_fields = [f for f in required_fields if f not in anchor.locator]
+            if missing_fields:
+                logger.warning(
+                    f"Anchor {anchor_id} has invalid locator - missing fields: {missing_fields}"
+                )
+
+        return GetAnchorResponse(
+            anchor_id=anchor.anchor_id,
+            doc_id=anchor.doc_id,
+            page=anchor.page,
+            chunk_id=anchor.chunk_id,
+            note_id=anchor.note_id,
+            quoted_text=anchor.quoted_text,
+            locator=anchor.locator,
+            created_at=anchor.created_at,
+        )
+
+    except HTTPException as e:
+        # Log error with latency
+        latency_ms = (time.time() - start_time) * 1000
+        logger.error(
+            f"GET /api/workspaces/{workspace_id}/docs/{doc_id}/anchors/{anchor_id} "
+            f"- user_id={user_id}, status_code={e.status_code}, "
+            f"detail={e.detail}, latency_ms={latency_ms:.2f}"
+        )
+        raise
+    except Exception as e:
+        # Log unexpected error
+        latency_ms = (time.time() - start_time) * 1000
+        logger.error(
+            f"GET /api/workspaces/{workspace_id}/docs/{doc_id}/anchors/{anchor_id} "
+            f"- user_id={user_id}, status_code=500, latency_ms={latency_ms:.2f}, "
+            f"error={str(e)}"
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred",
