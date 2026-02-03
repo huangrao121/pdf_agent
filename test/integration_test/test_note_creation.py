@@ -216,7 +216,7 @@ async def test_doc_workspace_mismatch(test_app, db_session, test_user, test_work
 
 @pytest.mark.asyncio
 async def test_blank_markdown(test_app, db_session, test_user, test_workspace):
-    """Test rejection of blank markdown content."""
+    """Test rejection of blank markdown content via Pydantic validation."""
     transport = ASGITransport(app=test_app)
     
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -228,7 +228,7 @@ async def test_blank_markdown(test_app, db_session, test_user, test_workspace):
             }
         )
         
-        # Pydantic validation returns 422 for validation errors
+        # Pydantic field validator returns 422 for validation errors
         assert response.status_code == 422
         data = response.json()
         # Check that validation error is about content_markdown

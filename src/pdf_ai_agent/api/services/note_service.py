@@ -160,10 +160,9 @@ class NoteService:
                         detail="DOC_WORKSPACE_MISMATCH: Document does not belong to workspace"
                     )
 
-            # 4. Clean and validate markdown
-            try:
-                cleaned_markdown = self._clean_and_validate_markdown(content_markdown)
-            except ValueError:
+            # 4. Clean markdown (Pydantic already validated, but defensive programming)
+            cleaned_markdown = content_markdown.strip()
+            if not cleaned_markdown:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="INVALID_ARGUMENT: content_markdown is empty"

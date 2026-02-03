@@ -330,7 +330,7 @@ class CreateNoteRequest(BaseModel):
     """Request schema for creating a note."""
     doc_id: Optional[int] = Field(None, description="Document ID (optional, for doc-scoped notes)")
     title: Optional[str] = Field(None, description="Note title (optional, auto-generated if not provided)")
-    content_markdown: str = Field(..., min_length=1, description="Markdown content (required, cannot be blank after trim)")
+    content_markdown: str = Field(..., min_length=1, description="Markdown content (required, validated to be non-blank after trim)")
     
     @field_validator('content_markdown')
     @classmethod
