@@ -237,7 +237,7 @@ class NoteModel(Base, TimestampMixin):
     
     # 外键 - 所属关系
     workspace_id: Mapped[int] = mapped_column(Integer, ForeignKey('workspaces.workspace_id'), nullable=False, index=True)
-    doc_id: Mapped[int] = mapped_column(Integer, ForeignKey('doc.doc_id'), nullable=False, index=True)
+    doc_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey('doc.doc_id'), nullable=True, index=True)
     owner_user_id: Mapped[BigInteger] = mapped_column(ForeignKey('users.user_id'), nullable=False, index=True)
 
     # 笔记内容
@@ -248,7 +248,7 @@ class NoteModel(Base, TimestampMixin):
     )  # 版本号，支持未来的版本控制和协作编辑
     
     # Relationships
-    doc: Mapped["DocsModel"] = relationship(
+    doc: Mapped[Optional["DocsModel"]] = relationship(
         "DocsModel",
         back_populates="notes"
     )
