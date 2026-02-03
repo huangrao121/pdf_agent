@@ -117,7 +117,7 @@ class TestNoteCreation:
             )
         
         assert exc_info.value.status_code == 400
-        assert exc_info.value.detail["error"]["code"] == "INVALID_ARGUMENT"
+        assert "INVALID_ARGUMENT" in exc_info.value.detail
 
     @pytest.mark.asyncio
     async def test_doc_not_found(self, db_session, test_user, test_workspace):
@@ -136,7 +136,7 @@ class TestNoteCreation:
             )
         
         assert exc_info.value.status_code == 404
-        assert exc_info.value.detail["error"]["code"] == "DOC_NOT_FOUND"
+        assert "DOC_NOT_FOUND" in exc_info.value.detail
 
     @pytest.mark.asyncio
     async def test_doc_workspace_mismatch(self, db_session, test_user, test_workspace, test_doc):
@@ -164,7 +164,7 @@ class TestNoteCreation:
             )
         
         assert exc_info.value.status_code == 409
-        assert exc_info.value.detail["error"]["code"] == "DOC_WORKSPACE_MISMATCH"
+        assert "DOC_WORKSPACE_MISMATCH" in exc_info.value.detail
 
     @pytest.mark.asyncio
     async def test_title_generated_from_heading(self, db_session, test_user, test_workspace):

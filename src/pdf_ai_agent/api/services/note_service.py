@@ -141,12 +141,7 @@ class NoteService:
             if not has_access:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail={
-                        "error": {
-                            "code": "FORBIDDEN",
-                            "message": "No permission to access workspace"
-                        }
-                    }
+                    detail="FORBIDDEN: No permission to access workspace"
                 )
 
             # 2. Validate doc if provided
@@ -155,24 +150,14 @@ class NoteService:
                 if doc is None:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
-                        detail={
-                            "error": {
-                                "code": "DOC_NOT_FOUND",
-                                "message": "Document not found"
-                            }
-                        }
+                        detail="DOC_NOT_FOUND: Document not found"
                     )
                 
                 # 3. Validate doc belongs to workspace
                 if doc.workspace_id != workspace_id:
                     raise HTTPException(
                         status_code=status.HTTP_409_CONFLICT,
-                        detail={
-                            "error": {
-                                "code": "DOC_WORKSPACE_MISMATCH",
-                                "message": "Document does not belong to workspace"
-                            }
-                        }
+                        detail="DOC_WORKSPACE_MISMATCH: Document does not belong to workspace"
                     )
 
             # 4. Clean and validate markdown
@@ -181,12 +166,7 @@ class NoteService:
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={
-                        "error": {
-                            "code": "INVALID_ARGUMENT",
-                            "message": "content_markdown is empty"
-                        }
-                    }
+                    detail="INVALID_ARGUMENT: content_markdown is empty"
                 )
 
             # 5. Generate title if not provided
@@ -223,10 +203,5 @@ class NoteService:
             logger.error(f"Note creation failed: {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail={
-                    "error": {
-                        "code": "INTERNAL_ERROR",
-                        "message": "An unexpected error occurred"
-                    }
-                }
+                detail="INTERNAL_ERROR: An unexpected error occurred"
             )

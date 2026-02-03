@@ -93,10 +93,5 @@ async def create_note(
         logger.error(f"Unexpected error in create_note: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "error": {
-                    "code": "INTERNAL_ERROR",
-                    "message": "An unexpected error occurred"
-                }
-            }
+            detail="INTERNAL_ERROR: An unexpected error occurred"
         )
