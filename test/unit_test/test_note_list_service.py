@@ -203,7 +203,7 @@ class TestListNotes:
         note_service = NoteService(db_session=db_session)
         
         # Create notes with same created_at (using manual insert)
-        base_time = datetime.utcnow()
+        base_time = datetime.now()
         
         note1 = NoteModel(
             workspace_id=test_workspace.workspace_id,
