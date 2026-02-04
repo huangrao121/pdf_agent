@@ -13,7 +13,8 @@ from pdf_ai_agent.config.database.models.model_document import (
     NoteModel,
     DocsModel,
 )
-from pdf_ai_agent.config.database.models.model_user import WorkspaceModel
+
+from pdf_ai_agent.api.utilties.workspace_utils import check_workspace_membership
 
 logger = logging.getLogger(__name__)
 
@@ -30,27 +31,6 @@ class NoteService:
         """
         self.db_session = db_session
 
-    async def _check_workspace_membership(
-        self, workspace_id: int, user_id: int
-    ) -> bool:
-        """
-        Check if user has access to workspace.
-
-        Args:
-            workspace_id: Workspace ID
-            user_id: User ID
-
-        Returns:
-            True if user has access, False otherwise
-        """
-        query = select(WorkspaceModel).where(
-            WorkspaceModel.workspace_id == workspace_id,
-            WorkspaceModel.owner_user_id == user_id,
-        )
-        result = await self.db_session.execute(query)
-        workspace = result.scalar_one_or_none()
-
-        return workspace is not None
 
     async def _check_doc_exists(self, doc_id: int) -> Optional[DocsModel]:
         """
@@ -137,7 +117,7 @@ class NoteService:
         """
         try:
             # 1. Validate workspace membership
-            has_access = await self._check_workspace_membership(workspace_id, user_id)
+            has_access = await check_workspace_membership(workspace_id, user_id, self.db_session)
             if not has_access:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,

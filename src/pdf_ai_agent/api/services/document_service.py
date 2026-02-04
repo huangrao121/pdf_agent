@@ -25,6 +25,8 @@ from pdf_ai_agent.config.database.models.model_user import WorkspaceModel
 from pdf_ai_agent.storage.local_storage import LocalStorageService
 from pdf_ai_agent.jobs.job_queue import JobQueueService
 
+from pdf_ai_agent.api.utilties.workspace_utils import check_workspace_membership
+
 logger = logging.getLogger(__name__)
 
 
@@ -71,28 +73,7 @@ class DocumentService:
         file_obj.seek(0)
 
         return magic == self.PDF_MAGIC_BYTES
-
-    async def _check_workspace_membership(
-        self, workspace_id: int, user_id: int
-    ) -> bool:
-        """
-        Check if user has access to workspace.
-
-        Args:
-            workspace_id: Workspace ID
-            user_id: User ID
-
-        Returns:
-            True if user has access, False otherwise
-        """
-        query = select(WorkspaceModel).where(
-            WorkspaceModel.workspace_id == workspace_id,
-            WorkspaceModel.owner_user_id == user_id,
-        )
-        result = await self.db_session.execute(query)
-        workspace = result.scalar_one_or_none()
-
-        return workspace is not None
+    
 
     async def _check_duplicate_by_sha256(
         self, workspace_id: int, file_sha256: str
@@ -141,7 +122,7 @@ class DocumentService:
         """
         try:
             # 1. Validate workspace membership
-            has_access = await self._check_workspace_membership(workspace_id, user_id)
+            has_access = await check_workspace_membership(workspace_id, user_id, self.db_session)
             if not has_access:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -333,7 +314,7 @@ class DocumentService:
             HTTPException: If validation fails or access denied
         """
         # 1. Check workspace access
-        has_access = await self._check_workspace_membership(workspace_id, user_id)
+        has_access = await check_workspace_membership(workspace_id, user_id, self.db_session)
         if not has_access:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail="FORBIDDEN_WORKSPACE"
@@ -395,7 +376,7 @@ class DocumentService:
             HTTPException: If validation fails or access denied
         """
         # 1. Check workspace access
-        has_access = await self._check_workspace_membership(workspace_id, user_id)
+        has_access = await check_workspace_membership(workspace_id, user_id, self.db_session)
         if not has_access:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail="FORBIDDEN_WORKSPACE"
@@ -446,7 +427,7 @@ class DocumentService:
             HTTPException: If validation fails or access denied
         """
         # 1. Check workspace access
-        has_access = await self._check_workspace_membership(workspace_id, user_id)
+        has_access = await check_workspace_membership(workspace_id, user_id, self.db_session)
         if not has_access:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail="FORBIDDEN_WORKSPACE"
@@ -557,7 +538,7 @@ class DocumentService:
             HTTPException: If validation fails or access denied
         """
         # 1. Check workspace access
-        has_access = await self._check_workspace_membership(workspace_id, user_id)
+        has_access = await check_workspace_membership(workspace_id, user_id, self.db_session)
         if not has_access:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail="FORBIDDEN_WORKSPACE"
@@ -646,7 +627,7 @@ class DocumentService:
         """
         try:
             # 1. Check workspace access
-            has_access = await self._check_workspace_membership(workspace_id, user_id)
+            has_access = await check_workspace_membership(workspace_id, user_id, self.db_session)
             if not has_access:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN, detail="FORBIDDEN_WORKSPACE"
@@ -804,7 +785,7 @@ class DocumentService:
             HTTPException: If validation fails, access denied, or anchor not found
         """
         # 1. Check workspace access
-        has_access = await self._check_workspace_membership(workspace_id, user_id)
+        has_access = await check_workspace_membership(workspace_id, user_id, self.db_session)
         if not has_access:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail="FORBIDDEN_WORKSPACE"

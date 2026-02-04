@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pdf_ai_agent.config.database.init_database import get_db_session
 from pdf_ai_agent.api.services.note_service import NoteService
-from pdf_ai_agent.api.schemas.document_schemas import (
+from pdf_ai_agent.api.schemas.note_schemas import (
     CreateNoteRequest,
     CreateNoteResponse,
     NoteErrorResponse,
