@@ -6,6 +6,8 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from datetime import datetime
 
+from fastapi import FastAPI
+
 from pdf_ai_agent.config.database.models.model_user import UserModel, WorkspaceModel
 from pdf_ai_agent.config.database.models.model_document import DocsModel, NoteModel
 
@@ -62,12 +64,14 @@ async def test_doc(db_session, test_user, test_workspace):
 @pytest.fixture
 async def test_app(db_session):
     """Create test app with overridden dependencies."""
-    from main import create_app
-    
-    app = create_app()
-    
-    # Override db session dependency
+    from dotenv import load_dotenv
+    from pdf_ai_agent.api.routes.notes import router as notes_router
     from pdf_ai_agent.config.database.init_database import get_db_session
+    load_dotenv()
+    
+    app = FastAPI(title="PDF_Agent_integration_test")
+    app.include_router(notes_router)
+    # Override db session dependency with a function that yields the session
     
     async def override_get_db_session():
         yield db_session
@@ -301,11 +305,14 @@ async def test_pagination_stable_across_inserts(test_app, db_session, test_user,
         next_cursor = data["next_cursor"]
         
         # Insert a new note (should not affect cursor-based pagination)
+        # Set timestamp to be newer than all existing notes so it won't appear in cursor-based queries
         new_note = NoteModel(
             workspace_id=test_workspace.workspace_id,
             owner_user_id=test_user.user_id,
             title="New Note",
             markdown="New content",
+            created_at=base_time + timedelta(seconds=10),  # Much newer than any existing notes
+            updated_at=base_time + timedelta(seconds=10),
         )
         db_session.add(new_note)
         await db_session.commit()
