@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import Optional
+from typing import Optional, List
+from datetime import datetime
 from enum import Enum
 
 
@@ -68,6 +69,59 @@ class NoteErrorResponse(BaseModel):
                     "code": "DOC_NOT_FOUND",
                     "message": "Document not found"
                 }
+            }
+        }
+    }
+
+
+class NoteListItem(BaseModel):
+    """Schema for a note in the list response."""
+    note_id: int = Field(..., description="Note ID")
+    workspace_id: int = Field(..., description="Workspace ID")
+    doc_id: Optional[int] = Field(None, description="Document ID (null for workspace-level notes)")
+    title: str = Field(..., description="Note title")
+    version: int = Field(..., description="Note version")
+    owner_user_id: int = Field(..., description="Owner user ID")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "note_id": 987,
+                "workspace_id": 1,
+                "doc_id": 123,
+                "title": "Attention mechanism summary",
+                "version": 1,
+                "owner_user_id": 42,
+                "created_at": "2026-01-22T08:30:00Z",
+                "updated_at": "2026-01-22T08:30:00Z"
+            }
+        }
+    }
+
+
+class ListNotesResponse(BaseModel):
+    """Response schema for listing notes."""
+    notes: List[NoteListItem] = Field(..., description="List of notes")
+    next_cursor: Optional[str] = Field(None, description="Cursor for next page (null if at end)")
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "notes": [
+                    {
+                        "note_id": 987,
+                        "workspace_id": 1,
+                        "doc_id": 123,
+                        "title": "Attention mechanism summary",
+                        "version": 1,
+                        "owner_user_id": 42,
+                        "created_at": "2026-01-22T08:30:00Z",
+                        "updated_at": "2026-01-22T08:30:00Z"
+                    }
+                ],
+                "next_cursor": "eyJjcmVhdGVkX2F0Ijoi..."
             }
         }
     }
