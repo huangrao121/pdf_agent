@@ -22,6 +22,10 @@ from pdf_ai_agent.api.schemas.note_schemas import (
     NoteErrorResponse,
     NoteListItem,
     ListNotesResponse,
+    GetNoteResponse,
+    NoteDetail,
+    AnchorDetail,
+    AnchorLocatorDetail,
 )
 
 router = APIRouter(prefix="/api/workspaces", tags=["Notes"])
@@ -183,6 +187,115 @@ async def list_notes(
         raise
     except Exception as e:
         logger.error(f"Unexpected error in list_notes: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="INTERNAL_ERROR: An unexpected error occurred"
+        )
+
+
+@router.get(
+    "/{workspace_id}/notes/{note_id}",
+    response_model=GetNoteResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        403: {"model": NoteErrorResponse, "description": "Forbidden - no access to workspace"},
+        404: {"model": NoteErrorResponse, "description": "Note not found"},
+        500: {"model": NoteErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_note(
+    workspace_id: int = Path(..., description="Workspace ID", gt=0),
+    note_id: int = Path(..., description="Note ID", gt=0),
+    user_id: int = Query(..., description="User ID (dev mode)"),
+    note_service: NoteService = Depends(get_note_service),
+):
+    """
+    Get note markdown content and anchors.
+
+    **Authentication (Dev Mode):**
+    - Requires `user_id` in query parameter
+    - Production mode would use JWT token authentication
+
+    **Authorization:**
+    - User must have access to the workspace (member+)
+    - Note must exist in the specified workspace
+
+    **Response:**
+    - Returns full note markdown content
+    - Returns anchors associated with the note
+    - Anchors are sorted by created_at ASC for stable ordering
+    - Returns empty array if note has no anchors
+
+    **Security:**
+    - Returns 404 if note doesn't exist OR doesn't belong to workspace
+    - This prevents enumeration attacks and leaking note existence
+
+    **Returns:**
+    - 200: Note with markdown content and anchors
+    - 403: No access to workspace (FORBIDDEN_WORKSPACE)
+    - 404: Note not found or workspace mismatch (NOTE_NOT_FOUND)
+    - 500: Database error (DB_QUERY_FAILED)
+    """
+    try:
+        # Get note with anchors
+        note, anchors = await note_service.get_note(
+            workspace_id=workspace_id,
+            note_id=note_id,
+            user_id=user_id,
+        )
+
+        # Convert note to response format
+        note_detail = NoteDetail(
+            note_id=note.note_id,
+            workspace_id=note.workspace_id,
+            doc_id=note.doc_id,
+            owner_user_id=note.owner_user_id,
+            title=note.title,
+            markdown=note.markdown,
+            version=note.version,
+            created_at=note.created_at,
+            updated_at=note.updated_at,
+        )
+
+        # Convert anchors to response format
+        anchor_details = []
+        for anchor in anchors:
+            # Parse locator to ensure it has the correct structure
+            locator = anchor.locator
+            if locator:
+                locator_detail = AnchorLocatorDetail(
+                    type=locator.get("type", "pdf_quadpoints"),
+                    coord_space=locator.get("coord_space", "pdf_points"),
+                    page=locator.get("page", anchor.page),
+                    quads=locator.get("quads", []),
+                )
+            else:
+                # Fallback if locator is missing (shouldn't happen but defensive)
+                locator_detail = AnchorLocatorDetail(
+                    type="pdf_quadpoints",
+                    coord_space="pdf_points",
+                    page=anchor.page,
+                    quads=[],
+                )
+
+            anchor_details.append(
+                AnchorDetail(
+                    anchor_id=anchor.anchor_id,
+                    doc_id=anchor.doc_id,
+                    chunk_id=anchor.chunk_id,
+                    page=anchor.page,
+                    quoted_text=anchor.quoted_text or "",
+                    locator=locator_detail,
+                    created_at=anchor.created_at,
+                )
+            )
+
+        return GetNoteResponse(note=note_detail, anchors=anchor_details)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in get_note: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="INTERNAL_ERROR: An unexpected error occurred"
