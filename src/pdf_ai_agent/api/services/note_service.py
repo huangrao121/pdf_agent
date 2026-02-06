@@ -350,3 +350,77 @@ class NoteService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="DB_QUERY_FAILED"
             )
+
+    async def get_note(
+        self,
+        workspace_id: int,
+        note_id: int,
+        user_id: int,
+    ) -> Tuple[NoteModel, list]:
+        """
+        Get a note with its associated anchors.
+
+        Args:
+            workspace_id: Workspace ID
+            note_id: Note ID
+            user_id: User ID
+
+        Returns:
+            Tuple of (note model, list of anchor models sorted by created_at ASC)
+
+        Raises:
+            HTTPException: If validation fails or access denied
+        """
+        try:
+            # 1. Check workspace access
+            has_access = await check_workspace_membership(workspace_id, user_id, self.db_session)
+            if not has_access:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="FORBIDDEN_WORKSPACE"
+                )
+
+            # 2. Query note with workspace_id filter
+            query = select(NoteModel).where(
+                and_(
+                    NoteModel.note_id == note_id,
+                    NoteModel.workspace_id == workspace_id,
+                )
+            )
+            result = await self.db_session.execute(query)
+            note = result.scalar_one_or_none()
+
+            # 3. Return 404 if note not found or doesn't belong to workspace
+            if note is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="NOTE_NOT_FOUND"
+                )
+
+            # 4. Import AnchorModel here to avoid circular imports
+            from pdf_ai_agent.config.database.models.model_document import AnchorModel
+
+            # 5. Query anchors for this note, sorted by created_at ASC
+            anchor_query = select(AnchorModel).where(
+                AnchorModel.note_id == note_id
+            ).order_by(AnchorModel.created_at.asc())
+
+            anchor_result = await self.db_session.execute(anchor_query)
+            anchors = list(anchor_result.scalars().all())
+
+            logger.info(
+                f"Note retrieved successfully: note_id={note_id}, "
+                f"workspace_id={workspace_id}, user_id={user_id}, "
+                f"anchors_count={len(anchors)}"
+            )
+
+            return note, anchors
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Get note failed: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="DB_QUERY_FAILED"
+            )
