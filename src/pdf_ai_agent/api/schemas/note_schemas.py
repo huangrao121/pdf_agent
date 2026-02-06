@@ -215,7 +215,7 @@ class NoteDetail(BaseModel):
 class GetNoteResponse(BaseModel):
     """Response schema for getting note with anchors."""
     note: NoteDetail = Field(..., description="Note details")
-    anchors: List[AnchorDetail] = Field(..., description="List of anchors associated with the note")
+    anchors_map: dict[str, AnchorDetail] = Field(..., description="Map of anchors associated with the note, keyed by anchor_id")
     
     model_config = {
         "json_schema_extra": {
@@ -231,8 +231,8 @@ class GetNoteResponse(BaseModel):
                     "created_at": "2026-01-22T08:30:00Z",
                     "updated_at": "2026-01-22T08:30:00Z"
                 },
-                "anchors": [
-                    {
+                "anchors_map": {
+                    "789": {
                         "anchor_id": 789,
                         "doc_id": 123,
                         "chunk_id": 456,
@@ -248,7 +248,7 @@ class GetNoteResponse(BaseModel):
                         },
                         "created_at": "2026-01-22T08:31:00Z"
                     }
-                ]
+                }
             }
         }
     }

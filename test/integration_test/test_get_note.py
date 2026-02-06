@@ -148,7 +148,7 @@ async def test_app(db_session):
 async def test_get_note_with_markdown_and_anchors(
     test_app, db_session, test_user, test_workspace, test_note, test_doc
 ):
-    """Test GET note returns markdown content and anchors (member access)."""
+    """Test GET note returns markdown content and anchors_map (member access)."""
     # Create anchors for the note
     base_time = datetime.now()
 
@@ -189,6 +189,8 @@ async def test_get_note_with_markdown_and_anchors(
     db_session.add(anchor1)
     db_session.add(anchor2)
     await db_session.commit()
+    await db_session.refresh(anchor1)
+    await db_session.refresh(anchor2)
 
     transport = ASGITransport(app=test_app)
 
@@ -203,7 +205,7 @@ async def test_get_note_with_markdown_and_anchors(
 
         # Verify note structure
         assert "note" in data
-        assert "anchors" in data
+        assert "anchors_map" in data
 
         # Verify note details
         note = data["note"]
@@ -217,19 +219,23 @@ async def test_get_note_with_markdown_and_anchors(
         assert "created_at" in note
         assert "updated_at" in note
 
-        # Verify anchors
-        anchors = data["anchors"]
-        assert len(anchors) == 2
+        # Verify anchors_map
+        anchors_map = data["anchors_map"]
+        assert isinstance(anchors_map, dict)
+        assert len(anchors_map) == 2
 
-        # Verify anchors are sorted by created_at ASC
-        assert anchors[0]["quoted_text"] == "The model uses scaled dot-product attention."
-        assert anchors[1]["quoted_text"] == "Second anchor text."
+        # Verify anchors are in the map with string keys
+        anchor1_id = str(anchor1.anchor_id)
+        anchor2_id = str(anchor2.anchor_id)
+        assert anchor1_id in anchors_map
+        assert anchor2_id in anchors_map
 
         # Verify anchor structure
-        anchor = anchors[0]
-        assert anchor["anchor_id"] is not None
+        anchor = anchors_map[anchor1_id]
+        assert anchor["anchor_id"] == anchor1.anchor_id
         assert anchor["doc_id"] == test_doc.doc_id
         assert anchor["page"] == 12
+        assert anchor["quoted_text"] == "The model uses scaled dot-product attention."
         assert "chunk_id" in anchor
         assert "locator" in anchor
         assert anchor["locator"]["type"] == "pdf_quadpoints"
@@ -243,7 +249,7 @@ async def test_get_note_with_markdown_and_anchors(
 async def test_get_note_with_empty_anchors_array(
     test_app, db_session, test_user, test_workspace, test_note
 ):
-    """Test GET note returns empty anchors array when note has no anchors."""
+    """Test GET note returns empty anchors_map when note has no anchors."""
     transport = ASGITransport(app=test_app)
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -256,17 +262,17 @@ async def test_get_note_with_empty_anchors_array(
         data = response.json()
 
         assert "note" in data
-        assert "anchors" in data
+        assert "anchors_map" in data
 
         # Verify note details
         note = data["note"]
         assert note["note_id"] == test_note.note_id
         assert note["markdown"] == "# Attention Mechanism\n\nThe model uses scaled dot-product attention."
 
-        # Verify empty anchors array
-        anchors = data["anchors"]
-        assert anchors == []
-        assert isinstance(anchors, list)
+        # Verify empty anchors_map
+        anchors_map = data["anchors_map"]
+        assert anchors_map == {}
+        assert isinstance(anchors_map, dict)
 
 
 @pytest.mark.asyncio

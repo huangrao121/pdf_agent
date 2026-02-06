@@ -222,16 +222,16 @@ async def get_note(
 
     **Response:**
     - Returns full note markdown content
-    - Returns anchors associated with the note
-    - Anchors are sorted by created_at ASC for stable ordering
-    - Returns empty array if note has no anchors
+    - Returns anchors_map as a dictionary keyed by anchor_id
+    - Anchors are sorted by created_at ASC before mapping
+    - Returns empty object {} if note has no anchors
 
     **Security:**
     - Returns 404 if note doesn't exist OR doesn't belong to workspace
     - This prevents enumeration attacks and leaking note existence
 
     **Returns:**
-    - 200: Note with markdown content and anchors
+    - 200: Note with markdown content and anchors_map
     - 403: No access to workspace (FORBIDDEN_WORKSPACE)
     - 404: Note not found or workspace mismatch (NOTE_NOT_FOUND)
     - 500: Database error (DB_QUERY_FAILED)
@@ -257,8 +257,8 @@ async def get_note(
             updated_at=note.updated_at,
         )
 
-        # Convert anchors to response format
-        anchor_details = []
+        # Convert anchors to response format as a map
+        anchors_map = {}
         for anchor in anchors:
             # Parse locator to ensure it has the correct structure
             locator = anchor.locator
@@ -278,19 +278,20 @@ async def get_note(
                     quads=[],
                 )
 
-            anchor_details.append(
-                AnchorDetail(
-                    anchor_id=anchor.anchor_id,
-                    doc_id=anchor.doc_id,
-                    chunk_id=anchor.chunk_id,
-                    page=anchor.page,
-                    quoted_text=anchor.quoted_text or "",
-                    locator=locator_detail,
-                    created_at=anchor.created_at,
-                )
+            anchor_detail = AnchorDetail(
+                anchor_id=anchor.anchor_id,
+                doc_id=anchor.doc_id,
+                chunk_id=anchor.chunk_id,
+                page=anchor.page,
+                quoted_text=anchor.quoted_text or "",
+                locator=locator_detail,
+                created_at=anchor.created_at,
             )
+            
+            # Use anchor_id as string key
+            anchors_map[str(anchor.anchor_id)] = anchor_detail
 
-        return GetNoteResponse(note=note_detail, anchors=anchor_details)
+        return GetNoteResponse(note=note_detail, anchors_map=anchors_map)
 
     except HTTPException:
         raise
