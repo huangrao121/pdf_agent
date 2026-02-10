@@ -2,8 +2,7 @@
 Unit tests for note list service.
 """
 import pytest
-from datetime import datetime, timedelta
-from sqlalchemy import select
+from datetime import datetime
 from pdf_ai_agent.api.services.note_service import NoteService
 from pdf_ai_agent.config.database.models.model_user import UserModel, WorkspaceModel
 from pdf_ai_agent.config.database.models.model_document import DocsModel, NoteModel

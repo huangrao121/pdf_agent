@@ -3,10 +3,7 @@ Authentication routes for login, logout, and token management.
 """
 import os
 import logging
-import secrets
-import hashlib
-import base64
-from urllib.parse import urlencode
+
 from fastapi import APIRouter, Depends, Request, HTTPException, status, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,12 +23,9 @@ from pdf_ai_agent.api.schemas.auth_schemas import (
     OAuthAuthorizeRequest,
     OAuthAuthorizeResponse,
     OAuthAuthorizeData,
-    OAuthCallbackResponse,
-    OAuthCallbackData,
 )
 from pdf_ai_agent.api.services.auth_service import AuthService
 from pdf_ai_agent.api.exceptions import (
-    AuthenticationError,
     InvalidCredentialsError,
     AccountDisabledError,
     EmailNotVerifiedError,
@@ -615,7 +609,7 @@ async def oauth_google_callback(
         # Extract user information from id_token
         provider_subject = id_token_payload.get("sub")
         provider_email = id_token_payload.get("email")
-        email_verified = id_token_payload.get("email_verified", False)
+        # email_verified = id_token_payload.get("email_verified", False)
         provider_name = id_token_payload.get("name")
         avatar_url = id_token_payload.get("picture")
         
@@ -696,7 +690,7 @@ async def oauth_google_callback(
         response.delete_cookie("oauth_pkce_verifier")
         return response
     
-    except OAuthDisabledError as e:
+    except OAuthDisabledError:
         logger.warning("OAuth is disabled")
         # frontend_base_url might not be defined if exception occurs early
         frontend_url = os.getenv("FRONTEND_BASE_URL", "http://localhost:3000")

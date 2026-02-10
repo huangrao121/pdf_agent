@@ -3,7 +3,6 @@ Integration tests for note list endpoint.
 """
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
 from datetime import datetime
 
 from fastapi import FastAPI
@@ -84,7 +83,7 @@ async def test_app(db_session):
 @pytest.mark.asyncio
 async def test_list_notes_with_cursor(test_app, db_session, test_user, test_workspace):
     """Test listing notes with cursor-based pagination."""
-    from datetime import datetime, timedelta
+    from datetime import timedelta
     
     # Create multiple notes with manually set timestamps
     base_time = datetime.now()
@@ -273,7 +272,7 @@ async def test_doc_workspace_mismatch(test_app, db_session, test_user, test_work
 @pytest.mark.asyncio
 async def test_pagination_stable_across_inserts(test_app, db_session, test_user, test_workspace):
     """Test that pagination remains stable when new notes are inserted."""
-    from datetime import datetime, timedelta
+    from datetime import timedelta
     
     # Create initial notes with manually set timestamps
     base_time = datetime.now()

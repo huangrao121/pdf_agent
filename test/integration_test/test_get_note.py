@@ -3,7 +3,6 @@ Integration tests for GET note endpoint.
 """
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
 from datetime import datetime, timedelta
 
 from pdf_ai_agent.config.database.models.model_user import UserModel, WorkspaceModel

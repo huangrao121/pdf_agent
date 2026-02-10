@@ -3,7 +3,6 @@ Tests for the user registration API endpoint and components.
 """
 import pytest
 
-from pdf_ai_agent.api.schemas.auth_schemas import RegisterRequest
 from pdf_ai_agent.api.services.auth_service import AuthService
 from pdf_ai_agent.api.exceptions import (
     InvalidCredentialsError,
@@ -12,7 +11,6 @@ from pdf_ai_agent.api.exceptions import (
     UsernameTakenError,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import ValidationError
 
 
 class TestAuthServiceDatabase:

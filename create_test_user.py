@@ -52,7 +52,7 @@ async def create_test_user():
         
         print("✓ Test user created successfully!")
         print(f"  Email: {test_user.email}")
-        print(f"  Password: testpassword123")
+        print("  Password: testpassword123")
         print(f"  User ID: {test_user.user_id}")
         print(f"  Full Name: {test_user.full_name}")
 

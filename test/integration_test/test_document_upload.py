@@ -7,7 +7,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
 from pdf_ai_agent.config.database.models.model_user import UserModel, WorkspaceModel
-from pdf_ai_agent.config.database.models.model_document import DocsModel, JobModel
+from pdf_ai_agent.config.database.models.model_document import DocsModel
 
 
 @pytest.fixture

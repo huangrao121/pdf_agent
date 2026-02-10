@@ -2,8 +2,7 @@
 Pytest configuration and fixtures for testing.
 """
 import pytest
-import asyncio
-from sqlalchemy import event, create_engine, BigInteger, Integer
+from sqlalchemy import event, BigInteger, Integer
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.dialects.sqlite import JSON

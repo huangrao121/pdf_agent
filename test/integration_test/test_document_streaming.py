@@ -242,7 +242,7 @@ class TestDocumentStreamingAPI:
             response = await client.get(
                 f"/api/workspaces/{test_workspace.workspace_id}/docs/{test_document.doc_id}/file",
                 params={"user_id": test_user.user_id},
-                headers={"Range": f"bytes=500-"},
+                headers={"Range": "bytes=500-"},
             )
 
         assert response.status_code == 206
@@ -290,7 +290,7 @@ class TestDocumentStreamingAPI:
             response = await client.get(
                 f"/api/workspaces/{test_workspace.workspace_id}/docs/{test_document.doc_id}/file",
                 params={"user_id": test_user.user_id},
-                headers={"Range": f"bytes=10000-20000"},
+                headers={"Range": "bytes=10000-20000"},
             )
 
         assert response.status_code == 416

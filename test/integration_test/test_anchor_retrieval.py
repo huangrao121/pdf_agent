@@ -3,7 +3,6 @@ Integration tests for anchor retrieval (GET) endpoint.
 """
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
 
 from fastapi import FastAPI
 from dotenv import load_dotenv

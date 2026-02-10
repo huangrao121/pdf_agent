@@ -2,7 +2,6 @@
 Unit tests for filename sanitization.
 """
 
-import pytest
 from pdf_ai_agent.api.routes.documents import sanitize_filename
 
 

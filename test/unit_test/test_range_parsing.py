@@ -2,7 +2,6 @@
 Unit tests for HTTP Range header parsing.
 """
 
-import pytest
 from pdf_ai_agent.storage.local_storage import LocalStorageService
 
 

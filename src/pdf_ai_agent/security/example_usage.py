@@ -161,13 +161,13 @@ def main():
         f.write(env_content)
     
     print("✅ 密钥生成成功！")
-    print(f"📁 已写入 .env 文件")
-    print(f"\n当前密钥 ID: key-2024-01")
+    print("📁 已写入 .env 文件")
+    print("\n当前密钥 ID: key-2024-01")
     print(f"Keyset 包含 {len(keyset)} 个公钥")
     
     # 显示内容（不显示完整的私钥）
     print(f"\n私钥前 50 字符: {private_key[:50]}...")
-    print(f"\nKeyset:")
+    print("\nKeyset:")
     for kid in keyset:
         pub = keyset[kid][:50] + "..."
         print(f"  {kid}: {pub}")

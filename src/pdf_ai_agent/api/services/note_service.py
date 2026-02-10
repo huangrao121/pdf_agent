@@ -3,7 +3,6 @@ Note service for handling note creation and management.
 """
 
 import logging
-import re
 import json
 import base64
 from typing import Optional, List, Tuple

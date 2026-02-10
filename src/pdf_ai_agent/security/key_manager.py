@@ -1,8 +1,7 @@
 """
 Key manager for handling JWT signing and verification keys with rotation support.
 """
-import os
-from typing import Dict, Optional
+from typing import Dict
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.backends import default_backend

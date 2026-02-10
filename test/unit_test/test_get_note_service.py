@@ -3,7 +3,6 @@ Unit tests for get_note service method.
 """
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import select
 from pdf_ai_agent.api.services.note_service import NoteService
 from pdf_ai_agent.config.database.models.model_user import UserModel, WorkspaceModel
 from pdf_ai_agent.config.database.models.model_document import (

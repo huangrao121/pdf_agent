@@ -4,8 +4,6 @@ Tests for OAuth authorization endpoint.
 import pytest
 import os
 from unittest.mock import patch, MagicMock
-from fastapi import status
-from fastapi.testclient import TestClient
 from pdf_ai_agent.api.services.auth_service import AuthService
 
 

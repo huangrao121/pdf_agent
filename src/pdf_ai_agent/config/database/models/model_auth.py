@@ -7,7 +7,7 @@ This module contains the database models for:
 - Verification codes (email verification, password reset, change email)
 """
 
-from sqlalchemy import Integer, String, Text, ForeignKey, DateTime, Boolean, Index
+from sqlalchemy import String, Text, ForeignKey, DateTime, Boolean, Index
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 from sqlalchemy.dialects.postgresql import BIGINT as BigInteger
 from sqlalchemy import Enum

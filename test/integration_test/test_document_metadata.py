@@ -3,7 +3,6 @@ Integration tests for document metadata endpoint.
 """
 import pytest
 from httpx import ASGITransport, AsyncClient
-from datetime import datetime
 
 from fastapi import FastAPI
 from contextlib import asynccontextmanager

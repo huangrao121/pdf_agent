@@ -6,7 +6,6 @@ import hashlib
 import base64
 import json
 import logging
-import time
 from urllib.parse import urlencode
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +16,7 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 
 from pdf_ai_agent.config.database.models.model_user import UserModel
-from pdf_ai_agent.config.database.models.model_auth import PasswordCredentialModel, OAuthIdentityModel, OAuthProviderEnum
+from pdf_ai_agent.config.database.models.model_auth import PasswordCredentialModel, OAuthIdentityModel
 from pdf_ai_agent.security.password_utils import verify_password, hash_password
 from pdf_ai_agent.api.exceptions import (
     InvalidCredentialsError,

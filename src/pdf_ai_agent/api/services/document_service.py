@@ -21,7 +21,6 @@ from pdf_ai_agent.config.database.models.model_document import (
     ChunksModel,
     NoteModel,
 )
-from pdf_ai_agent.config.database.models.model_user import WorkspaceModel
 from pdf_ai_agent.storage.local_storage import LocalStorageService
 from pdf_ai_agent.jobs.job_queue import JobQueueService
 
@@ -288,7 +287,7 @@ class DocumentService:
             logger.warning(f"Invalid cursor: {e}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid cursor: INVALID_CURSOR",
+                detail="Invalid cursor: INVALID_CURSOR",
             )
 
     async def list_documents(

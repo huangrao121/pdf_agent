@@ -3,8 +3,7 @@ Integration tests for document list endpoint.
 """
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
@@ -222,7 +221,7 @@ async def test_list_documents_pagination(test_app, db_session, test_user, test_w
 async def test_list_documents_stable_ordering(test_app, db_session, test_user, test_workspace):
     """Test that ordering is stable (created_at DESC, doc_id DESC)."""
     # Create documents
-    docs = await create_test_documents(db_session, test_workspace.workspace_id, test_user.user_id, 30)
+    await create_test_documents(db_session, test_workspace.workspace_id, test_user.user_id, 30)
     
     transport = ASGITransport(app=test_app)
     
