@@ -129,10 +129,11 @@ async def test_note_without_doc(db_session, test_user, test_workspace):
 @pytest.fixture
 async def test_app(db_session):
     """Create test app with overridden dependencies."""
-    from main import create_app
+    from fastapi import FastAPI
+    from pdf_ai_agent.api.routes.notes import router as notes_router
 
-    app = create_app()
-
+    app = FastAPI()
+    app.include_router(notes_router)
     # Override db session dependency
     from pdf_ai_agent.config.database.init_database import get_db_session
 
