@@ -43,6 +43,40 @@ class CreateNoteResponse(BaseModel):
     }
 
 
+class PatchNoteRequest(BaseModel):
+    """Request schema for partially updating a note."""
+    title: Optional[str] = Field(None, description="Note title (optional)")
+    content_markdown: Optional[str] = Field(None, description="Markdown content (optional)")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "title": "New title",
+                "content_markdown": "Update markdown..."
+            }
+        }
+    }
+
+
+class PatchNoteResponse(BaseModel):
+    """Response schema for note patch."""
+    note_id: int = Field(..., description="Note ID")
+    version: int = Field(..., description="Updated note version")
+    updated_at: datetime = Field(
+        ..., description="Last update timestamp", serialization_alias="update_at"
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "note_id": 111,
+                "version": 2,
+                "update_at": "2026-01-22T09:00:00Z"
+            }
+        }
+    }
+
+
 class NoteErrorCode(str, Enum):
     """Error codes for note operations."""
     FORBIDDEN = "FORBIDDEN"

@@ -4,7 +4,7 @@ Unit tests for note service components.
 import pytest
 from pdf_ai_agent.api.services.note_service import NoteService
 from pdf_ai_agent.config.database.models.model_user import UserModel, WorkspaceModel
-from pdf_ai_agent.config.database.models.model_document import DocsModel
+from pdf_ai_agent.config.database.models.model_document import DocsModel, NoteModel
 
 
 @pytest.fixture
@@ -54,6 +54,22 @@ async def test_doc(db_session, test_user, test_workspace):
     await db_session.commit()
     await db_session.refresh(doc)
     return doc
+
+
+@pytest.fixture
+async def test_note(db_session, test_user, test_workspace):
+    """Create a test note."""
+    note = NoteModel(
+        workspace_id=test_workspace.workspace_id,
+        doc_id=None,
+        owner_user_id=test_user.user_id,
+        title="Original Title",
+        markdown="Original content",
+    )
+    db_session.add(note)
+    await db_session.commit()
+    await db_session.refresh(note)
+    return note
 
 
 class TestNoteCreation:
@@ -238,3 +254,120 @@ class TestTitleGeneration:
         long_heading = "# " + "a" * 300
         title = NoteService._generate_title_from_markdown(long_heading)
         assert len(title) == 255
+
+
+class TestNotePatch:
+    """Tests for note patching."""
+
+    @pytest.mark.asyncio
+    async def test_patch_title_only(self, db_session, test_user, test_workspace, test_note):
+        """Test patching title only preserves markdown."""
+        note_service = NoteService(db_session=db_session)
+        original_markdown = test_note.markdown
+        original_version = test_note.version
+
+        updated = await note_service.patch_note(
+            workspace_id=test_workspace.workspace_id,
+            note_id=test_note.note_id,
+            user_id=test_user.user_id,
+            title="  New Title  ",
+            content_markdown=None,
+        )
+
+        assert updated.title == "New Title"
+        assert updated.markdown == original_markdown
+        assert updated.version == original_version + 1
+
+    @pytest.mark.asyncio
+    async def test_patch_content_only(self, db_session, test_user, test_workspace, test_note):
+        """Test patching content only preserves title."""
+        note_service = NoteService(db_session=db_session)
+        original_title = test_note.title
+        original_version = test_note.version
+
+        updated = await note_service.patch_note(
+            workspace_id=test_workspace.workspace_id,
+            note_id=test_note.note_id,
+            user_id=test_user.user_id,
+            title=None,
+            content_markdown="  Updated content  ",
+        )
+
+        assert updated.title == original_title
+        assert updated.markdown == "Updated content"
+        assert updated.version == original_version + 1
+
+    @pytest.mark.asyncio
+    async def test_patch_both_fields(self, db_session, test_user, test_workspace, test_note):
+        """Test patching both title and markdown."""
+        note_service = NoteService(db_session=db_session)
+        original_version = test_note.version
+
+        updated = await note_service.patch_note(
+            workspace_id=test_workspace.workspace_id,
+            note_id=test_note.note_id,
+            user_id=test_user.user_id,
+            title="Updated Title",
+            content_markdown="Updated markdown",
+        )
+
+        assert updated.title == "Updated Title"
+        assert updated.markdown == "Updated markdown"
+        assert updated.version == original_version + 1
+
+    @pytest.mark.asyncio
+    async def test_patch_empty_body(self, db_session, test_user, test_workspace, test_note):
+        """Test patching with empty body fails."""
+        from fastapi import HTTPException
+
+        note_service = NoteService(db_session=db_session)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await note_service.patch_note(
+                workspace_id=test_workspace.workspace_id,
+                note_id=test_note.note_id,
+                user_id=test_user.user_id,
+                title=None,
+                content_markdown=None,
+            )
+
+        assert exc_info.value.status_code == 400
+        assert "INVALID_REQUEST" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_patch_blank_markdown(self, db_session, test_user, test_workspace, test_note):
+        """Test patching with blank markdown fails."""
+        from fastapi import HTTPException
+
+        note_service = NoteService(db_session=db_session)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await note_service.patch_note(
+                workspace_id=test_workspace.workspace_id,
+                note_id=test_note.note_id,
+                user_id=test_user.user_id,
+                title=None,
+                content_markdown="   \n  ",
+            )
+
+        assert exc_info.value.status_code == 400
+        assert "INVALID_ARGUMENT" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_patch_note_not_found(self, db_session, test_user, test_workspace):
+        """Test patching a non-existent note returns 404."""
+        from fastapi import HTTPException
+
+        note_service = NoteService(db_session=db_session)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await note_service.patch_note(
+                workspace_id=test_workspace.workspace_id,
+                note_id=999999,
+                user_id=test_user.user_id,
+                title="New Title",
+                content_markdown=None,
+            )
+
+        assert exc_info.value.status_code == 404
+        assert "NOTE_NOT_FOUND" in exc_info.value.detail

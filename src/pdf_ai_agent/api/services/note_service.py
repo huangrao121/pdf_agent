@@ -3,6 +3,7 @@ Note service for handling note creation and management.
 """
 
 import logging
+import time
 import json
 import base64
 from typing import Optional, List, Tuple
@@ -185,6 +186,118 @@ class NoteService:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="INTERNAL_ERROR: An unexpected error occurred"
+            )
+
+    async def patch_note(
+        self,
+        workspace_id: int,
+        note_id: int,
+        user_id: int,
+        title: Optional[str] = None,
+        content_markdown: Optional[str] = None,
+    ) -> NoteModel:
+        """
+        Partially update a note.
+
+        Args:
+            workspace_id: Workspace ID
+            note_id: Note ID
+            user_id: User ID
+            title: Optional new title
+            content_markdown: Optional new markdown content
+
+        Returns:
+            Updated note model
+
+        Raises:
+            HTTPException: If validation fails or access denied
+        """
+        start_time = time.monotonic()
+        try:
+            # 1. Check workspace access
+            has_access = await check_workspace_membership(workspace_id, user_id, self.db_session)
+            if not has_access:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="FORBIDDEN_WORKSPACE"
+                )
+
+            # 2. Validate request body
+            if title is None and content_markdown is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="INVALID_REQUEST: body is empty"
+                )
+
+            # 3. Query note with workspace_id filter
+            query = select(NoteModel).where(
+                and_(
+                    NoteModel.note_id == note_id,
+                    NoteModel.workspace_id == workspace_id,
+                )
+            )
+            result = await self.db_session.execute(query)
+            note = result.scalar_one_or_none()
+
+            if note is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="NOTE_NOT_FOUND"
+                )
+
+            fields_updated: list[str] = []
+
+            # 4. Update title if provided
+            if title is not None:
+                cleaned_title = title.strip()
+                if not cleaned_title:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="INVALID_ARGUMENT: title is empty"
+                    )
+                note.title = cleaned_title[:255]
+                fields_updated.append("title")
+
+            # 5. Update markdown if provided
+            if content_markdown is not None:
+                cleaned_markdown = content_markdown.strip()
+                if not cleaned_markdown:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="INVALID_ARGUMENT: content_markdown is empty"
+                    )
+                note.markdown = cleaned_markdown
+                fields_updated.append("content_markdown")
+
+            # 6. Increment version
+            note.version = (note.version or 0) + 1
+
+            await self.db_session.commit()
+            await self.db_session.refresh(note)
+
+            latency_ms = int((time.monotonic() - start_time) * 1000)
+            logger.info(
+                "Note patched successfully: workspace_id=%s, note_id=%s, user_id=%s, "
+                "fields_updated=%s, new_version=%s, latency_ms=%s",
+                workspace_id,
+                note_id,
+                user_id,
+                fields_updated,
+                note.version,
+                latency_ms,
+            )
+
+            return note
+
+        except HTTPException:
+            await self.db_session.rollback()
+            raise
+        except Exception as e:
+            await self.db_session.rollback()
+            logger.error(f"Patch note failed: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="DB_QUERY_FAILED"
             )
 
     @staticmethod
