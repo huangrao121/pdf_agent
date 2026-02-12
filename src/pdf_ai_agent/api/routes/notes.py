@@ -19,6 +19,8 @@ from pdf_ai_agent.api.services.note_service import NoteService
 from pdf_ai_agent.api.schemas.note_schemas import (
     CreateNoteRequest,
     CreateNoteResponse,
+    PatchNoteRequest,
+    PatchNoteResponse,
     NoteErrorResponse,
     NoteListItem,
     ListNotesResponse,
@@ -187,6 +189,69 @@ async def list_notes(
         raise
     except Exception as e:
         logger.error(f"Unexpected error in list_notes: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="INTERNAL_ERROR: An unexpected error occurred"
+        )
+
+
+@router.patch(
+    "/{workspace_id}/notes/{note_id}",
+    response_model=PatchNoteResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        400: {"model": NoteErrorResponse, "description": "Invalid request"},
+        403: {"model": NoteErrorResponse, "description": "Forbidden - no access to workspace"},
+        404: {"model": NoteErrorResponse, "description": "Note not found"},
+        409: {"model": NoteErrorResponse, "description": "Version conflict"},
+        500: {"model": NoteErrorResponse, "description": "Internal server error"},
+    },
+)
+async def patch_note(
+    request: PatchNoteRequest,
+    workspace_id: int = Path(..., description="Workspace ID", gt=0),
+    note_id: int = Path(..., description="Note ID", gt=0),
+    user_id: int = Query(..., description="User ID (dev mode)"),
+    note_service: NoteService = Depends(get_note_service),
+):
+    """
+    Partially update a note's title and/or markdown content.
+
+    **Authentication (Dev Mode):**
+    - Requires `user_id` in query parameter
+    - Production mode would use JWT token authentication
+
+    **Validation:**
+    - At least one of `title` or `content_markdown` must be provided
+    - If provided, values are trimmed and must not be blank
+
+    **Returns:**
+    - 200: Note updated successfully
+    - 400: Invalid request (missing fields or blank content)
+    - 403: No access to workspace (FORBIDDEN_WORKSPACE)
+    - 404: Note not found (NOTE_NOT_FOUND)
+    - 409: Version conflict (VERSION_CONFLICT)
+    - 500: Server error
+    """
+    try:
+        note = await note_service.patch_note(
+            workspace_id=workspace_id,
+            note_id=note_id,
+            user_id=user_id,
+            title=request.title,
+            content_markdown=request.content_markdown,
+        )
+
+        return PatchNoteResponse(
+            note_id=note.note_id,
+            version=note.version,
+            updated_at=note.updated_at,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in patch_note: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="INTERNAL_ERROR: An unexpected error occurred"
