@@ -184,23 +184,11 @@ class ChatSessionService:
         note_id = context.get("note_id")
         doc_id = context.get("doc_id")
         anchor_ids = context.get("anchor_ids") or []
-        doc_anchor_ids = context.get("doc_anchor_ids") or []
-
-        if doc_anchor_ids and doc_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="INVALID_ARGUMENT: doc_anchor_ids requires doc_id",
-            )
 
         if anchor_ids and not isinstance(anchor_ids, list):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="INVALID_ARGUMENT: anchor_ids must be a list",
-            )
-        if doc_anchor_ids and not isinstance(doc_anchor_ids, list):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="INVALID_ARGUMENT: doc_anchor_ids must be a list",
             )
 
         if note_id is not None:
@@ -228,33 +216,19 @@ class ChatSessionService:
         for anchor in anchor_map.values():
             if anchor.workspace_id != workspace_id:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail="ANCHOR_INVALID: Anchor not in workspace",
                 )
             if note_id is not None and anchor.note_id != int(note_id):
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail="ANCHOR_INVALID: Anchor not associated with note",
-                )
-
-        doc_anchor_map = await self._load_anchors(doc_anchor_ids)
-        for anchor in doc_anchor_map.values():
-            if anchor.workspace_id != workspace_id:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="ANCHOR_INVALID: Anchor not in workspace",
-                )
-            if doc_id is not None and anchor.doc_id != int(doc_id):
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="ANCHOR_INVALID: Anchor not associated with document",
                 )
 
         return {
             "note_id": int(note_id) if note_id is not None else None,
             "anchor_ids": [int(anchor_id) for anchor_id in anchor_ids],
             "doc_id": int(doc_id) if doc_id is not None else None,
-            "doc_anchor_ids": [int(anchor_id) for anchor_id in doc_anchor_ids],
         }
 
     async def create_session(
