@@ -11,11 +11,16 @@ from pdf_ai_agent.api.schemas.chat_schemas import (
     ChatSessionContext,
     ChatSessionListItem,
     ChatDefaults,
+    ChatSessionDetail,
     CreateChatSessionRequest,
     CreateChatSessionResponse,
     ChatErrorResponse,
     ChatSessionData,
     ListChatSessionsResponse,
+    MessageContentItem,
+    MessageItem,
+    MessagePage,
+    GetChatSessionResponse,
 )
 from pdf_ai_agent.api.services.chat_session_service import ChatSessionService
 from pdf_ai_agent.config.database.init_database import get_db_session
@@ -178,6 +183,99 @@ async def list_chat_sessions(
         raise
     except Exception as exc:
         logger.error("Unexpected error in list_chat_sessions: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="INTERNAL_ERROR: An unexpected error occurred",
+        )
+
+
+@router.get(
+    "/{workspace_id}/chat/sessions/{session_id}",
+    response_model=GetChatSessionResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        400: {"model": ChatErrorResponse, "description": "Invalid request"},
+        403: {"model": ChatErrorResponse, "description": "Forbidden - no access to workspace"},
+        404: {"model": ChatErrorResponse, "description": "Session not found"},
+        500: {"model": ChatErrorResponse, "description": "Internal server error"},
+    },
+)
+async def get_chat_session(
+    workspace_id: int = Path(..., description="Workspace ID", gt=0),
+    session_id: int = Path(..., description="Session ID", gt=0),
+    user_id: int = Query(..., description="User ID (dev mode)"),
+    limit: int = Query(3, description="Number of messages per page"),
+    cursor: str | None = Query(None, description="Cursor for pagination"),
+    order: str | None = Query(None, description="Order: asc or desc"),
+    chat_service: ChatSessionService = Depends(get_chat_session_service),
+):
+    """
+    Get chat session details with messages.
+
+    **Authentication (Dev Mode):**
+    - Requires `user_id` in query parameter
+    """
+    try:
+        session_model, messages, next_cursor = await chat_service.get_session_messages(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            user_id=user_id,
+            limit=limit,
+            cursor=cursor,
+            order=order,
+        )
+
+        context_payload = session_model.context_json or {
+            "note_id": None,
+            "anchor_ids": [],
+            "doc_id": None,
+            "doc_anchor_ids": [],
+        }
+        defaults_payload = session_model.defaults_json or {
+            "model": "gpt-4.1-mini",
+            "temperature": 0.2,
+            "top_p": 1.0,
+            "system_prompt": None,
+            "retrieval": {"enabled": True, "top_k": 8, "rerank": False},
+        }
+
+        session_detail = ChatSessionDetail(
+            id=session_model.session_id,
+            workspace_id=session_model.workspace_id,
+            title=session_model.title,
+            mode=session_model.mode,
+            context=ChatSessionContext(**context_payload),
+            defaults=ChatDefaults(**defaults_payload),
+            created_by=session_model.owner_user_id,
+            created_at=session_model.created_at,
+            updated_at=session_model.updated_at,
+            last_message_at=session_model.last_message_at,
+            message_count=session_model.message_count,
+        )
+
+        message_items: list[MessageItem] = []
+        for message in messages:
+            content = [MessageContentItem(type="text", text=message.content)]
+            citations = message.citation or []
+            message_items.append(
+                MessageItem(
+                    id=message.message_id,
+                    role=message.role,
+                    content=content,
+                    citations=citations,
+                    created_at=message.created_at,
+                )
+            )
+
+        return GetChatSessionResponse(
+            session=session_detail,
+            messages=MessagePage(items=message_items, next_cursor=next_cursor),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Unexpected error in get_chat_session: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="INTERNAL_ERROR: An unexpected error occurred",

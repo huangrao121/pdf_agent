@@ -77,6 +77,48 @@ class CreateChatSessionResponse(BaseModel):
     session: ChatSessionData = Field(..., description="Chat session data")
 
 
+class ChatSessionDetail(BaseModel):
+    """Session detail payload for get session responses."""
+    id: int = Field(..., description="Session ID")
+    workspace_id: int = Field(..., description="Workspace ID")
+    title: str = Field(..., description="Chat title")
+    mode: ChatSessionMode = Field(..., description="Chat mode")
+    context: ChatSessionContext = Field(..., description="Chat context")
+    defaults: ChatDefaults = Field(..., description="Chat defaults")
+    created_by: int = Field(..., description="Creator user ID")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime = Field(..., description="Update timestamp")
+    last_message_at: Optional[datetime] = Field(None, description="Last message timestamp")
+    message_count: int = Field(..., description="Total message count")
+
+
+class MessageContentItem(BaseModel):
+    """Content block for a message."""
+    type: str = Field(..., description="Content type, e.g., text")
+    text: str = Field(..., description="Text content")
+
+
+class MessageItem(BaseModel):
+    """Chat message item."""
+    id: int = Field(..., description="Message ID")
+    role: str = Field(..., description="Message role")
+    content: List[MessageContentItem] = Field(..., description="Message content blocks")
+    citations: Optional[List[dict]] = Field(None, description="Citations")
+    created_at: datetime = Field(..., description="Message creation timestamp")
+
+
+class MessagePage(BaseModel):
+    """Message page for pagination."""
+    items: List[MessageItem] = Field(..., description="Messages")
+    next_cursor: Optional[str] = Field(None, description="Cursor for next page")
+
+
+class GetChatSessionResponse(BaseModel):
+    """Response schema for getting a chat session and messages."""
+    session: ChatSessionDetail = Field(..., description="Chat session detail")
+    messages: MessagePage = Field(..., description="Messages page")
+
+
 class ChatContextSummary(BaseModel):
     """Summary of chat context for list responses."""
     doc_id: Optional[int] = Field(None, description="Document ID")
