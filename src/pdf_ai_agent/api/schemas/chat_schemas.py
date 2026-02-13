@@ -77,6 +77,32 @@ class CreateChatSessionResponse(BaseModel):
     session: ChatSessionData = Field(..., description="Chat session data")
 
 
+class ChatContextSummary(BaseModel):
+    """Summary of chat context for list responses."""
+    doc_id: Optional[int] = Field(None, description="Document ID")
+    note_id: Optional[int] = Field(None, description="Note ID")
+    anchor_count: int = Field(0, description="Total anchor count")
+
+
+class ChatSessionListItem(BaseModel):
+    """List item for chat sessions."""
+    session_id: int = Field(..., description="Session ID")
+    workspace_id: int = Field(..., description="Workspace ID")
+    title: str = Field(..., description="Chat title")
+    mode: ChatSessionMode = Field(..., description="Chat mode")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime = Field(..., description="Update timestamp", serialization_alias="update_at")
+    last_message_at: Optional[datetime] = Field(None, description="Last message timestamp")
+    message_count: int = Field(..., description="Total message count")
+    context_summary: ChatContextSummary = Field(..., description="Context summary")
+
+
+class ListChatSessionsResponse(BaseModel):
+    """Response schema for listing chat sessions."""
+    chat_session_items: List[ChatSessionListItem] = Field(..., description="Chat session list")
+    next_cursor: Optional[str] = Field(None, description="Cursor for next page")
+
+
 class ChatErrorCode(str, Enum):
     """Error codes for chat session operations."""
     FORBIDDEN = "FORBIDDEN"

@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, String, Text, ForeignKey, Boolean, Float
+from sqlalchemy import Integer, String, Text, ForeignKey, Boolean, Float, DateTime
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 from sqlalchemy.dialects.postgresql import BIGINT as BigInteger
 from sqlalchemy.dialects.postgresql import JSONB
@@ -13,6 +13,7 @@ from sqlalchemy import Index
 from enum import Enum as PyEnum
 
 from typing import Optional, Dict, TYPE_CHECKING
+from datetime import datetime
 
 from pdf_ai_agent.config.database.models.model_base import Base, TimestampMixin, CreatedMixin
 
@@ -349,13 +350,14 @@ class ChatSessionModel(Base, TimestampMixin):
     - 会话分享和导出
     
     设计要点:
-    - 只有 created_at（不需要 updated_at）
+    - 基于 updated_at 做历史分页
     - 属于某个 workspace，方便权限控制
     - 可关联多条 messages
     """
     __tablename__ = 'doc_chat_session'
     __table_args__ = (
         UniqueConstraint('workspace_id', 'client_request_id', name='uq_chat_session_client_request'),
+        Index('idx_chat_session_workspace_owner_updated_id', 'workspace_id', 'owner_user_id', 'updated_at', 'session_id'),
     )
 
     # 主键
@@ -375,6 +377,8 @@ class ChatSessionModel(Base, TimestampMixin):
     context_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     defaults_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     client_request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    last_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    message_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
 
     # Relationships
     owner: Mapped["UserModel"] = relationship(
