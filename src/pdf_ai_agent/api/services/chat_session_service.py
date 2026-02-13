@@ -3,11 +3,14 @@ Chat session service for creating chat sessions.
 """
 
 import logging
+import base64
+import json
 from copy import deepcopy
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional, Tuple, List
+from datetime import datetime
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pdf_ai_agent.api.utilties.workspace_utils import check_workspace_membership
@@ -184,11 +187,23 @@ class ChatSessionService:
         note_id = context.get("note_id")
         doc_id = context.get("doc_id")
         anchor_ids = context.get("anchor_ids") or []
+        doc_anchor_ids = context.get("doc_anchor_ids") or []
+
+        if doc_anchor_ids and doc_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="INVALID_ARGUMENT: doc_anchor_ids requires doc_id",
+            )
 
         if anchor_ids and not isinstance(anchor_ids, list):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="INVALID_ARGUMENT: anchor_ids must be a list",
+            )
+        if doc_anchor_ids and not isinstance(doc_anchor_ids, list):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="INVALID_ARGUMENT: doc_anchor_ids must be a list",
             )
 
         if note_id is not None:
@@ -216,20 +231,151 @@ class ChatSessionService:
         for anchor in anchor_map.values():
             if anchor.workspace_id != workspace_id:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="ANCHOR_INVALID: Anchor not in workspace",
                 )
             if note_id is not None and anchor.note_id != int(note_id):
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="ANCHOR_INVALID: Anchor not associated with note",
+                )
+
+        doc_anchor_map = await self._load_anchors(doc_anchor_ids)
+        for anchor in doc_anchor_map.values():
+            if anchor.workspace_id != workspace_id:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="ANCHOR_INVALID: Anchor not in workspace",
+                )
+            if doc_id is not None and anchor.doc_id != int(doc_id):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="ANCHOR_INVALID: Anchor not associated with document",
                 )
 
         return {
             "note_id": int(note_id) if note_id is not None else None,
             "anchor_ids": [int(anchor_id) for anchor_id in anchor_ids],
             "doc_id": int(doc_id) if doc_id is not None else None,
+            "doc_anchor_ids": [int(anchor_id) for anchor_id in doc_anchor_ids],
         }
+
+    @staticmethod
+    def encode_cursor(session_id: int, updated_at: datetime) -> str:
+        cursor_data = {"session_id": session_id, "updated_at": updated_at.isoformat()}
+        cursor_json = json.dumps(cursor_data, separators=(",", ":"))
+        cursor_bytes = cursor_json.encode("utf-8")
+        encoded = base64.urlsafe_b64encode(cursor_bytes).decode("utf-8").rstrip("=")
+        return encoded
+
+    @staticmethod
+    def decode_cursor(cursor: str) -> Tuple[int, datetime]:
+        try:
+            padding = 4 - (len(cursor) % 4)
+            if padding != 4:
+                cursor += "=" * padding
+            cursor_bytes = base64.urlsafe_b64decode(cursor.encode("utf-8"))
+            cursor_json = cursor_bytes.decode("utf-8")
+            cursor_data = json.loads(cursor_json)
+            if "session_id" not in cursor_data or "updated_at" not in cursor_data:
+                raise ValueError("Missing required fields in cursor")
+            session_id = int(cursor_data["session_id"])
+            updated_at = datetime.fromisoformat(cursor_data["updated_at"])
+            return session_id, updated_at
+        except (ValueError, KeyError, json.JSONDecodeError) as exc:
+            logger.warning("Invalid cursor: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="INVALID_CURSOR",
+            )
+
+    @staticmethod
+    def _validate_mode_filter(mode: Optional[str]) -> Optional[str]:
+        if mode is None:
+            return None
+        if mode not in {e.value for e in ChatSessionModeEnum}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="INVALID_ARGUMENT: mode must be one of ask|assist|agent",
+            )
+        return mode
+
+    async def list_sessions(
+        self,
+        workspace_id: int,
+        user_id: int,
+        mode: Optional[str] = None,
+        limit: int = 10,
+        cursor: Optional[str] = None,
+    ) -> Tuple[List[ChatSessionModel], Optional[str]]:
+        try:
+            workspace = await self._get_workspace(workspace_id)
+            if workspace is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="WORKSPACE_NOT_FOUND: Workspace not found",
+                )
+
+            has_access = await check_workspace_membership(workspace_id, user_id, self.db_session)
+            if not has_access:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="FORBIDDEN: No permission to access workspace",
+                )
+
+            if limit < 1 or limit > 50:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="INVALID_ARGUMENT: limit out of range",
+                )
+
+            normalized_mode = self._validate_mode_filter(mode)
+
+            query = select(ChatSessionModel).where(
+                ChatSessionModel.workspace_id == workspace_id,
+                ChatSessionModel.owner_user_id == user_id,
+            )
+            if normalized_mode is not None:
+                query = query.where(ChatSessionModel.mode == normalized_mode)
+
+            if cursor:
+                cursor_session_id, cursor_updated_at = self.decode_cursor(cursor)
+                query = query.where(
+                    or_(
+                        ChatSessionModel.updated_at < cursor_updated_at,
+                        and_(
+                            ChatSessionModel.updated_at == cursor_updated_at,
+                            ChatSessionModel.session_id < cursor_session_id,
+                        ),
+                    )
+                )
+
+            query = query.order_by(
+                ChatSessionModel.updated_at.desc(),
+                ChatSessionModel.session_id.desc(),
+            ).limit(limit + 1)
+
+            result = await self.db_session.execute(query)
+            sessions = list(result.scalars().all())
+
+            has_next_page = len(sessions) > limit
+            if has_next_page:
+                sessions = sessions[:limit]
+                last_session = sessions[-1]
+                next_cursor = self.encode_cursor(last_session.session_id, last_session.updated_at)
+            else:
+                next_cursor = None
+
+            return sessions, next_cursor
+
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("List chat sessions failed: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="DB_QUERY_FAILED",
+            )
 
     async def create_session(
         self,

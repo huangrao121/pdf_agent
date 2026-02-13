@@ -7,12 +7,15 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pdf_ai_agent.api.schemas.chat_schemas import (
+    ChatContextSummary,
     ChatSessionContext,
+    ChatSessionListItem,
     ChatDefaults,
     CreateChatSessionRequest,
     CreateChatSessionResponse,
     ChatErrorResponse,
     ChatSessionData,
+    ListChatSessionsResponse,
 )
 from pdf_ai_agent.api.services.chat_session_service import ChatSessionService
 from pdf_ai_agent.config.database.init_database import get_db_session
@@ -74,6 +77,7 @@ async def create_chat_session(
             "note_id": None,
             "anchor_ids": [],
             "doc_id": None,
+            "doc_anchor_ids": [],
         }
         defaults_payload = session_model.defaults_json or {
             "model": "gpt-4.1-mini",
@@ -100,6 +104,80 @@ async def create_chat_session(
         raise
     except Exception as exc:
         logger.error("Unexpected error in create_chat_session: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="INTERNAL_ERROR: An unexpected error occurred",
+        )
+
+
+@router.get(
+    "/{workspace_id}/chat/sessions",
+    response_model=ListChatSessionsResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        400: {"model": ChatErrorResponse, "description": "Invalid request"},
+        403: {"model": ChatErrorResponse, "description": "Forbidden - no access to workspace"},
+        404: {"model": ChatErrorResponse, "description": "Workspace not found"},
+        500: {"model": ChatErrorResponse, "description": "Internal server error"},
+    },
+)
+async def list_chat_sessions(
+    workspace_id: int = Path(..., description="Workspace ID", gt=0),
+    user_id: int = Query(..., description="User ID (dev mode)"),
+    mode: str | None = Query(None, description="Chat mode filter"),
+    limit: int = Query(10, description="Number of items per page"),
+    cursor: str | None = Query(None, description="Cursor for pagination"),
+    chat_service: ChatSessionService = Depends(get_chat_session_service),
+):
+    """
+    List chat sessions for a workspace.
+
+    **Authentication (Dev Mode):**
+    - Requires `user_id` in query parameter
+
+    **Filters:**
+    - mode: ask|assist|agent
+    """
+    try:
+        sessions, next_cursor = await chat_service.list_sessions(
+            workspace_id=workspace_id,
+            user_id=user_id,
+            mode=mode,
+            limit=limit,
+            cursor=cursor,
+        )
+
+        items: list[ChatSessionListItem] = []
+        for session in sessions:
+            context_payload = session.context_json or {}
+            anchor_ids = context_payload.get("anchor_ids") or []
+            doc_anchor_ids = context_payload.get("doc_anchor_ids") or []
+            context_summary = ChatContextSummary(
+                doc_id=context_payload.get("doc_id"),
+                note_id=context_payload.get("note_id"),
+                anchor_count=len(anchor_ids) + len(doc_anchor_ids),
+            )
+
+            items.append(
+                ChatSessionListItem(
+                    session_id=session.session_id,
+                    workspace_id=session.workspace_id,
+                    title=session.title,
+                    mode=session.mode,
+                    created_at=session.created_at,
+                    updated_at=session.updated_at,
+                    last_message_at=session.last_message_at,
+                    message_count=session.message_count,
+                    context_summary=context_summary,
+                )
+            )
+
+        return ListChatSessionsResponse(chat_session_items=items, next_cursor=next_cursor)
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Unexpected error in list_chat_sessions: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="INTERNAL_ERROR: An unexpected error occurred",
