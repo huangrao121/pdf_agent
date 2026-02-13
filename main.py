@@ -24,10 +24,12 @@ def create_app():
     from pdf_ai_agent.api.routes.auth import router as auth_router
     from pdf_ai_agent.api.routes.documents import router as documents_router
     from pdf_ai_agent.api.routes.notes import router as notes_router
+    from pdf_ai_agent.api.routes.chat_sessions import router as chat_sessions_router
     
     app.include_router(auth_router)
     app.include_router(documents_router)
     app.include_router(notes_router)
+    app.include_router(chat_sessions_router)
     
     @app.get("/health", tags=["Health Check"])
     async def health_check():
