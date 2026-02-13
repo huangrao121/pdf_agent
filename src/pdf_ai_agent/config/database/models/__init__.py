@@ -43,6 +43,7 @@ from pdf_ai_agent.config.database.models.model_document import (
     MessageModel,
     JobModel,
     DocStatus,
+    ChatSessionModeEnum,
     RoleEnum,
     JobTypeEnum,
     JobStatusEnum,
@@ -72,6 +73,7 @@ __all__ = [
     "JobModel",
     # Enums
     "DocStatus",
+    "ChatSessionModeEnum",
     "RoleEnum",
     "JobTypeEnum",
     "JobStatusEnum",

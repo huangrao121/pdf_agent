@@ -5,7 +5,8 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy import (
     Enum,
     Any,
-    CheckConstraint
+    CheckConstraint,
+    UniqueConstraint,
 )
 from sqlalchemy import Index
 
@@ -332,7 +333,13 @@ class AnchorModel(Base, TimestampMixin):
         "WorkspaceModel",
     )
 
-class ChatSessionModel(Base, CreatedMixin):
+class ChatSessionModeEnum(PyEnum):
+    ASK = "ask"
+    ASSIST = "assist"
+    AGENT = "agent"
+
+
+class ChatSessionModel(Base, TimestampMixin):
     """聊天会话模型 - 管理用户与 AI 的对话会话
     
     每个会话对应一次连续的对话，包含多条消息（MessageModel）。
@@ -347,6 +354,9 @@ class ChatSessionModel(Base, CreatedMixin):
     - 可关联多条 messages
     """
     __tablename__ = 'doc_chat_session'
+    __table_args__ = (
+        UniqueConstraint('workspace_id', 'client_request_id', name='uq_chat_session_client_request'),
+    )
 
     # 主键
     session_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -354,6 +364,17 @@ class ChatSessionModel(Base, CreatedMixin):
     # 外键 - 所属关系
     workspace_id: Mapped[int] = mapped_column(Integer, ForeignKey('workspaces.workspace_id'), nullable=False, index=True)
     owner_user_id: Mapped[BigInteger] = mapped_column(ForeignKey('users.user_id'), nullable=False, index=True)
+
+    # 会话元数据
+    title: Mapped[str] = mapped_column(String(255), nullable=False, server_default="New chat")
+    mode: Mapped[str] = mapped_column(
+        Enum(ChatSessionModeEnum, values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+        server_default=ChatSessionModeEnum.ASK.value,
+    )
+    context_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    defaults_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    client_request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     # Relationships
     owner: Mapped["UserModel"] = relationship(
