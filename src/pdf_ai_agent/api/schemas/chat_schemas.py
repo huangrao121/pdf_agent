@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ChatSessionMode(str, Enum):
@@ -43,6 +43,21 @@ class CreateChatSessionRequest(BaseModel):
     context: Optional[ChatSessionContext] = Field(None, description="Chat context")
     defaults: Optional[ChatDefaults] = Field(None, description="Default settings")
     client_request_id: Optional[str] = Field(None, description="Client request ID for idempotency")
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v):
+        """Validate that mode is one of the allowed values."""
+        allowed_modes = {"ask", "assist", "agent"}
+        if isinstance(v, str):
+            if v.lower() not in allowed_modes:
+                raise ValueError(f"mode must be one of {allowed_modes}, got '{v}'")
+        elif isinstance(v, ChatSessionMode):
+            # Already validated by enum type
+            pass
+        else:
+            raise ValueError(f"mode must be a string or ChatSessionMode, got {type(v)}")
+        return v
 
 
 class ChatSessionData(BaseModel):

@@ -74,7 +74,6 @@ async def create_chat_session(
             "note_id": None,
             "anchor_ids": [],
             "doc_id": None,
-            "doc_anchor_ids": [],
         }
         defaults_payload = session_model.defaults_json or {
             "model": "gpt-4.1-mini",
