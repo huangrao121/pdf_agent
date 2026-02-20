@@ -3,7 +3,9 @@ Chat session routes.
 """
 
 import logging
+import json
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pdf_ai_agent.api.schemas.chat_schemas import (
@@ -21,12 +23,19 @@ from pdf_ai_agent.api.schemas.chat_schemas import (
     MessageItem,
     MessagePage,
     GetChatSessionResponse,
+    AskMessageRequest,
+    AskMessageResponse,
 )
 from pdf_ai_agent.api.services.chat_session_service import ChatSessionService
 from pdf_ai_agent.config.database.init_database import get_db_session
 
 router = APIRouter(prefix="/api/workspaces", tags=["Chat Sessions"])
 logger = logging.getLogger(__name__)
+
+
+def _format_sse_event(event: str, data: dict) -> str:
+    payload = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+    return f"event: {event}\ndata: {payload}\n\n"
 
 
 def get_chat_session_service(
@@ -276,6 +285,105 @@ async def get_chat_session(
         raise
     except Exception as exc:
         logger.error("Unexpected error in get_chat_session: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="INTERNAL_ERROR: An unexpected error occurred",
+        )
+
+
+@router.post(
+    "/{workspace_id}/chat/sessions/{session_id}/message:ask",
+    response_model=AskMessageResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        400: {"model": ChatErrorResponse, "description": "Invalid request"},
+        401: {"model": ChatErrorResponse, "description": "Unauthorized"},
+        403: {"model": ChatErrorResponse, "description": "Forbidden - no access to workspace"},
+        404: {"model": ChatErrorResponse, "description": "Session not found"},
+        409: {"model": ChatErrorResponse, "description": "client_request_id already used"},
+        500: {"model": ChatErrorResponse, "description": "Internal server error"},
+    },
+)
+async def ask_message(
+    request: AskMessageRequest,
+    workspace_id: int = Path(..., description="Workspace ID", gt=0),
+    session_id: int = Path(..., description="Session ID", gt=0),
+    user_id: int = Query(..., description="User ID (dev mode)"),
+    stream: bool = Query(True, description="Stream response via SSE"),
+    chat_service: ChatSessionService = Depends(get_chat_session_service),
+):
+    """
+    Send a message to a chat session in ask mode.
+
+    **Authentication (Dev Mode):**
+    - Requires `user_id` in query parameter
+    """
+    try:
+        input_items = [item.model_dump() for item in request.input]
+        context = request.context.model_dump() if request.context else None
+        overrides = request.overrides.model_dump(exclude_none=True) if request.overrides else None
+
+        user_message, assistant_message = await chat_service.send_ask_message(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            user_id=user_id,
+            client_request_id=request.client_request_id,
+            input_items=input_items,
+            context=context,
+            overrides=overrides,
+        )
+
+        user_message_item = MessageItem(
+            id=user_message.message_id,
+            role=user_message.role,
+            content=[MessageContentItem(type="text", text=user_message.content)],
+            citations=None,
+            usage=None,
+            created_at=user_message.created_at,
+        )
+        assistant_usage = (assistant_message.context or {}).get("usage")
+        assistant_message_item = MessageItem(
+            id=assistant_message.message_id,
+            role=assistant_message.role,
+            content=[MessageContentItem(type="text", text=assistant_message.content)],
+            citations=assistant_message.citation or [],
+            usage=assistant_usage,
+            created_at=assistant_message.created_at,
+        )
+
+        if not stream:
+            return AskMessageResponse(
+                user_message=user_message_item,
+                assistant_message=assistant_message_item,
+            )
+
+        async def event_stream():
+            yield _format_sse_event(
+                "message.created",
+                {"user_message_id": user_message.message_id},
+            )
+            text = assistant_message.content or ""
+            chunk_size = 50
+            for start in range(0, len(text), chunk_size):
+                yield _format_sse_event(
+                    "assistant.delta",
+                    {"text": text[start : start + chunk_size]},
+                )
+            yield _format_sse_event(
+                "assistant.completed",
+                {
+                    "assistant_message_id": assistant_message.message_id,
+                    "citations": assistant_message.citation or [],
+                    "usage": assistant_usage or {},
+                },
+            )
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Unexpected error in ask_message: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="INTERNAL_ERROR: An unexpected error occurred",

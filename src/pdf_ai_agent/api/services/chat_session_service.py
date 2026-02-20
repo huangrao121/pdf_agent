@@ -5,9 +5,10 @@ Chat session service for creating chat sessions.
 import logging
 import base64
 import json
+import hashlib
 from copy import deepcopy
 from typing import Any, Dict, Iterable, Optional, Tuple, List
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
 from sqlalchemy import select, and_, or_
@@ -21,6 +22,7 @@ from pdf_ai_agent.config.database.models.model_document import (
     DocsModel,
     NoteModel,
     MessageModel,
+    RoleEnum,
 )
 from pdf_ai_agent.config.database.models.model_user import WorkspaceModel
 
@@ -41,6 +43,12 @@ DEFAULT_DEFAULTS: Dict[str, Any] = {
     "top_p": 1.0,
     "system_prompt": None,
     "retrieval": DEFAULT_RETRIEVAL,
+}
+DEFAULT_CONTEXT: Dict[str, Any] = {
+    "note_id": None,
+    "anchor_ids": [],
+    "doc_id": None,
+    "doc_anchor_ids": [],
 }
 
 
@@ -173,12 +181,7 @@ class ChatSessionService:
         context: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
         if context is None:
-            return {
-                "note_id": None,
-                "anchor_ids": [],
-                "doc_id": None,
-                "doc_anchor_ids": [],
-            }
+            return deepcopy(DEFAULT_CONTEXT)
         if not isinstance(context, dict):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -260,6 +263,292 @@ class ChatSessionService:
             "doc_id": int(doc_id) if doc_id is not None else None,
             "doc_anchor_ids": [int(anchor_id) for anchor_id in doc_anchor_ids],
         }
+
+    @staticmethod
+    def _normalize_input(input_items: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], str]:
+        if not input_items:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="INVALID_ARGUMENT: input is empty",
+            )
+
+        normalized: List[Dict[str, Any]] = []
+        text_parts: List[str] = []
+        for item in input_items:
+            if not isinstance(item, dict):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="INVALID_ARGUMENT: input items must be objects",
+                )
+            item_type = item.get("type")
+            text = item.get("text")
+            if item_type != "text":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="INVALID_ARGUMENT: input type must be text",
+                )
+            if text is None or not str(text).strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="INVALID_ARGUMENT: input text is empty",
+                )
+            normalized.append({"type": "text", "text": str(text)})
+            text_parts.append(str(text))
+
+        return normalized, "\n".join(text_parts)
+
+    def _apply_overrides(
+        self,
+        base_defaults: Dict[str, Any],
+        overrides: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        normalized = deepcopy(base_defaults)
+        if overrides is None:
+            return normalized
+
+        if not isinstance(overrides, dict):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="INVALID_ARGUMENT: overrides must be an object",
+            )
+
+        if "model" in overrides and overrides["model"] is not None:
+            model_name = overrides["model"]
+            if model_name not in ALLOWED_MODELS:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="INVALID_ARGUMENT: model not allowed",
+                )
+            normalized["model"] = model_name
+
+        if "temperature" in overrides and overrides["temperature"] is not None:
+            temperature = float(overrides["temperature"])
+            self._validate_float_range("temperature", temperature, 0.0, 2.0, True, True)
+            normalized["temperature"] = temperature
+
+        if "top_p" in overrides and overrides["top_p"] is not None:
+            top_p = float(overrides["top_p"])
+            self._validate_float_range("top_p", top_p, 0.0, 1.0, False, True)
+            normalized["top_p"] = top_p
+
+        if "system_prompt" in overrides:
+            normalized["system_prompt"] = overrides["system_prompt"]
+
+        if "retrieval" in overrides and overrides["retrieval"] is not None:
+            retrieval = overrides["retrieval"]
+            if not isinstance(retrieval, dict):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="INVALID_ARGUMENT: retrieval must be an object",
+                )
+            if "enabled" in retrieval and retrieval["enabled"] is not None:
+                normalized["retrieval"]["enabled"] = bool(retrieval["enabled"])
+            if "top_k" in retrieval and retrieval["top_k"] is not None:
+                top_k = int(retrieval["top_k"])
+                if top_k < 1:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="INVALID_ARGUMENT: retrieval.top_k must be >= 1",
+                    )
+                normalized["retrieval"]["top_k"] = top_k
+            if "rerank" in retrieval and retrieval["rerank"] is not None:
+                normalized["retrieval"]["rerank"] = bool(retrieval["rerank"])
+
+        return normalized
+
+    @staticmethod
+    def _compute_request_hash(payload: Dict[str, Any]) -> str:
+        payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        return hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _estimate_usage(prompt_text: str, completion_text: str) -> Dict[str, int]:
+        prompt_tokens = len(prompt_text.split())
+        completion_tokens = len(completion_text.split())
+        return {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        }
+
+    @staticmethod
+    def _build_citations(anchors: List[AnchorModel]) -> List[Dict[str, Any]]:
+        citations: List[Dict[str, Any]] = []
+        for anchor in anchors:
+            citations.append(
+                {
+                    "anchor_id": anchor.anchor_id,
+                    "doc_id": anchor.doc_id,
+                    "page": anchor.page,
+                    "locator": anchor.locator,
+                    "quoted_text": anchor.quoted_text,
+                }
+            )
+        return citations
+
+    async def _get_session_for_user(
+        self,
+        workspace_id: int,
+        session_id: int,
+        user_id: int,
+    ) -> ChatSessionModel:
+        session_query = select(ChatSessionModel).where(
+            ChatSessionModel.session_id == session_id,
+            ChatSessionModel.workspace_id == workspace_id,
+        )
+        result = await self.db_session.execute(session_query)
+        session_model = result.scalar_one_or_none()
+        if session_model is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="SESSION_NOT_FOUND",
+            )
+        if session_model.owner_user_id != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="FORBIDDEN: No permission to access session",
+            )
+        return session_model
+
+    async def send_ask_message(
+        self,
+        workspace_id: int,
+        session_id: int,
+        user_id: int,
+        client_request_id: str,
+        input_items: List[Dict[str, Any]],
+        context: Optional[Dict[str, Any]],
+        overrides: Optional[Dict[str, Any]],
+    ) -> Tuple[MessageModel, MessageModel]:
+        try:
+            has_access = await check_workspace_membership(workspace_id, user_id, self.db_session)
+            if not has_access:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="FORBIDDEN: No permission to access workspace",
+                )
+
+            session_model = await self._get_session_for_user(workspace_id, session_id, user_id)
+
+            normalized_client_request_id = client_request_id.strip()
+            if not normalized_client_request_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="INVALID_ARGUMENT: client_request_id is required",
+                )
+
+            normalized_input, input_text = self._normalize_input(input_items)
+
+            base_context = session_model.context_json or deepcopy(DEFAULT_CONTEXT)
+            normalized_context = (
+                await self._validate_context(workspace_id, context)
+                if context is not None
+                else await self._validate_context(workspace_id, base_context)
+            )
+
+            base_defaults = session_model.defaults_json or deepcopy(DEFAULT_DEFAULTS)
+            effective_defaults = self._apply_overrides(base_defaults, overrides)
+
+            request_payload = {
+                "input": normalized_input,
+                "context": normalized_context,
+                "overrides": overrides,
+            }
+            request_hash = self._compute_request_hash(request_payload)
+
+            existing_query = select(MessageModel).where(
+                MessageModel.session_id == session_id,
+                MessageModel.workspace_id == workspace_id,
+                MessageModel.role == RoleEnum.USER.value,
+                MessageModel.context["client_request_id"].astext == normalized_client_request_id,
+            )
+            existing_result = await self.db_session.execute(existing_query)
+            existing_user_message = existing_result.scalar_one_or_none()
+            if existing_user_message is not None:
+                existing_context = existing_user_message.context or {}
+                if existing_context.get("request_hash") != request_hash:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="CLIENT_REQUEST_ID_CONFLICT: client_request_id already used",
+                    )
+                assistant_query = select(MessageModel).where(
+                    MessageModel.session_id == session_id,
+                    MessageModel.workspace_id == workspace_id,
+                    MessageModel.role == RoleEnum.ASSISTANT.value,
+                    MessageModel.context["parent_user_message_id"].astext == str(existing_user_message.message_id),
+                )
+                assistant_result = await self.db_session.execute(assistant_query)
+                existing_assistant = assistant_result.scalar_one_or_none()
+                if existing_assistant is not None:
+                    return existing_user_message, existing_assistant
+                user_message = existing_user_message
+                is_new_user_message = False
+            else:
+                user_message = MessageModel(
+                    session_id=session_id,
+                    workspace_id=workspace_id,
+                    sender_user_id=user_id,
+                    content=input_text,
+                    role=RoleEnum.USER.value,
+                    context={
+                        "client_request_id": normalized_client_request_id,
+                        "request_hash": request_hash,
+                    },
+                )
+                self.db_session.add(user_message)
+                await self.db_session.flush()
+                await self.db_session.refresh(user_message)
+                is_new_user_message = True
+
+            anchor_ids = normalized_context.get("anchor_ids") or []
+            doc_anchor_ids = normalized_context.get("doc_anchor_ids") or []
+            anchor_map = await self._load_anchors(list({*anchor_ids, *doc_anchor_ids}))
+            citations = self._build_citations(list(anchor_map.values()))
+
+            assistant_text = (
+                "MVP response: "
+                f"{input_text[:500]}"
+                + ("..." if len(input_text) > 500 else "")
+            )
+            usage = self._estimate_usage(input_text, assistant_text)
+
+            assistant_message = MessageModel(
+                session_id=session_id,
+                workspace_id=workspace_id,
+                sender_user_id=None,
+                content=assistant_text,
+                role=RoleEnum.ASSISTANT.value,
+                citation=citations or None,
+                context={
+                    "client_request_id": normalized_client_request_id,
+                    "parent_user_message_id": user_message.message_id,
+                    "model": effective_defaults.get("model"),
+                    "usage": usage,
+                    "request_hash": request_hash,
+                },
+            )
+            self.db_session.add(assistant_message)
+            await self.db_session.flush()
+            await self.db_session.refresh(assistant_message)
+
+            session_model.last_message_at = assistant_message.created_at
+            increment = 2 if is_new_user_message else 1
+            session_model.message_count = (session_model.message_count or 0) + increment
+            session_model.updated_at = datetime.now(timezone.utc)
+            await self.db_session.commit()
+
+            return user_message, assistant_message
+
+        except HTTPException:
+            await self.db_session.rollback()
+            raise
+        except Exception as exc:
+            await self.db_session.rollback()
+            logger.error("Send ask message failed: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="INTERNAL_ERROR: An unexpected error occurred",
+            )
 
     @staticmethod
     def encode_cursor(session_id: int, updated_at: datetime) -> str:
