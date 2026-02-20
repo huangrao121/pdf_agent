@@ -428,6 +428,7 @@ class MessageModel(Base, CreatedMixin):
     
     # 外键
     session_id: Mapped[int] = mapped_column(Integer, ForeignKey('doc_chat_session.session_id'), nullable=False, index=True)
+    workspace_id: Mapped[int] = mapped_column(Integer, ForeignKey('workspaces.workspace_id'), nullable=False, index=True)
     sender_user_id: Mapped[BigInteger] = mapped_column(
         ForeignKey('users.user_id'), nullable=True, index=True
     )  # 发送者（AI/系统消息时为 NULL）
@@ -450,6 +451,9 @@ class MessageModel(Base, CreatedMixin):
     session: Mapped["ChatSessionModel"] = relationship(
         "ChatSessionModel",
         back_populates="messages",
+    )
+    workspace: Mapped["WorkspaceModel"] = relationship(
+        "WorkspaceModel",
     )
     sender: Mapped["UserModel"] = relationship(
         "UserModel",

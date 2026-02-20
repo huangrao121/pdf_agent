@@ -20,6 +20,7 @@ from pdf_ai_agent.config.database.models.model_document import (
     ChatSessionModeEnum,
     DocsModel,
     NoteModel,
+    MessageModel,
 )
 from pdf_ai_agent.config.database.models.model_user import WorkspaceModel
 
@@ -372,6 +373,152 @@ class ChatSessionService:
             raise
         except Exception as exc:
             logger.error("List chat sessions failed: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="DB_QUERY_FAILED",
+            )
+
+    @staticmethod
+    def encode_message_cursor(message_id: int, created_at: datetime) -> str:
+        cursor_data = {"message_id": message_id, "created_at": created_at.isoformat()}
+        cursor_json = json.dumps(cursor_data, separators=(",", ":"))
+        cursor_bytes = cursor_json.encode("utf-8")
+        encoded = base64.urlsafe_b64encode(cursor_bytes).decode("utf-8").rstrip("=")
+        return encoded
+
+    @staticmethod
+    def decode_message_cursor(cursor: str) -> Tuple[int, datetime]:
+        try:
+            padding = 4 - (len(cursor) % 4)
+            if padding != 4:
+                cursor += "=" * padding
+            cursor_bytes = base64.urlsafe_b64decode(cursor.encode("utf-8"))
+            cursor_json = cursor_bytes.decode("utf-8")
+            cursor_data = json.loads(cursor_json)
+            if "message_id" not in cursor_data or "created_at" not in cursor_data:
+                raise ValueError("Missing required fields in cursor")
+            message_id = int(cursor_data["message_id"])
+            created_at = datetime.fromisoformat(cursor_data["created_at"])
+            return message_id, created_at
+        except (ValueError, KeyError, json.JSONDecodeError) as exc:
+            logger.warning("Invalid message cursor: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="INVALID_CURSOR",
+            )
+
+    @staticmethod
+    def _validate_order(order: Optional[str]) -> str:
+        if order is None:
+            return "desc"
+        normalized = order.lower()
+        if normalized not in {"asc", "desc"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="INVALID_ARGUMENT: order must be asc or desc",
+            )
+        return normalized
+
+    async def get_session_messages(
+        self,
+        workspace_id: int,
+        session_id: int,
+        user_id: int,
+        limit: int = 3,
+        cursor: Optional[str] = None,
+        order: Optional[str] = None,
+    ) -> Tuple[ChatSessionModel, List[MessageModel], Optional[str]]:
+        try:
+            has_access = await check_workspace_membership(workspace_id, user_id, self.db_session)
+            if not has_access:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="FORBIDDEN: No permission to access workspace",
+                )
+            
+            session_query = select(ChatSessionModel).where(
+                ChatSessionModel.session_id == session_id,
+                ChatSessionModel.workspace_id == workspace_id,
+            )
+            result = await self.db_session.execute(session_query)
+            session_model = result.scalar_one_or_none()
+            if session_model is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="SESSION_NOT_FOUND",
+                )
+
+            if session_model.owner_user_id != user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="FORBIDDEN: No permission to access session",
+                )
+
+            if limit < 1 or limit > 10:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="INVALID_ARGUMENT: limit out of range",
+                )
+
+            sort_order = self._validate_order(order)
+
+            message_query = select(MessageModel).where(
+                MessageModel.session_id == session_id,
+                MessageModel.workspace_id == workspace_id,
+            )
+
+            if cursor:
+                cursor_message_id, cursor_created_at = self.decode_message_cursor(cursor)
+                if sort_order == "desc":
+                    message_query = message_query.where(
+                        or_(
+                            MessageModel.created_at < cursor_created_at,
+                            and_(
+                                MessageModel.created_at == cursor_created_at,
+                                MessageModel.message_id < cursor_message_id,
+                            ),
+                        )
+                    )
+                else:
+                    message_query = message_query.where(
+                        or_(
+                            MessageModel.created_at > cursor_created_at,
+                            and_(
+                                MessageModel.created_at == cursor_created_at,
+                                MessageModel.message_id > cursor_message_id,
+                            ),
+                        )
+                    )
+
+            if sort_order == "desc":
+                message_query = message_query.order_by(
+                    MessageModel.created_at.desc(),
+                    MessageModel.message_id.desc(),
+                )
+            else:
+                message_query = message_query.order_by(
+                    MessageModel.created_at.asc(),
+                    MessageModel.message_id.asc(),
+                )
+
+            message_query = message_query.limit(limit + 1)
+            message_result = await self.db_session.execute(message_query)
+            messages = list(message_result.scalars().all())
+
+            has_next_page = len(messages) > limit
+            if has_next_page:
+                messages = messages[:limit]
+                last_message = messages[-1]
+                next_cursor = self.encode_message_cursor(last_message.message_id, last_message.created_at)
+            else:
+                next_cursor = None
+
+            return session_model, messages, next_cursor
+
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("Get chat session failed: %s", exc)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="DB_QUERY_FAILED",
