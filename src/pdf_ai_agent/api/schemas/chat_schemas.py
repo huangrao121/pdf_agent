@@ -104,6 +104,7 @@ class MessageItem(BaseModel):
     role: str = Field(..., description="Message role")
     content: List[MessageContentItem] = Field(..., description="Message content blocks")
     citations: Optional[List[dict]] = Field(None, description="Citations")
+    usage: Optional[dict] = Field(None, description="Token usage metadata")
     created_at: datetime = Field(..., description="Message creation timestamp")
 
 
@@ -165,3 +166,32 @@ class ChatErrorDetail(BaseModel):
 class ChatErrorResponse(BaseModel):
     """Error response schema."""
     error: ChatErrorDetail = Field(..., description="Error details")
+
+
+class ChatOverridesRetrieval(BaseModel):
+    """Overrides for retrieval settings."""
+    enabled: Optional[bool] = Field(None, description="Enable retrieval")
+    top_k: Optional[int] = Field(None, description="Number of chunks to retrieve")
+    rerank: Optional[bool] = Field(None, description="Enable reranking")
+
+
+class ChatOverrides(BaseModel):
+    """Overrides for a single request."""
+    model: Optional[str] = Field(None, description="Override model name")
+    temperature: Optional[float] = Field(None, description="Override sampling temperature")
+    top_p: Optional[float] = Field(None, description="Override top-p sampling")
+    retrieval: Optional[ChatOverridesRetrieval] = Field(None, description="Override retrieval settings")
+
+
+class AskMessageRequest(BaseModel):
+    """Request schema for ask message."""
+    client_request_id: str = Field(..., description="Client request ID for idempotency", min_length=1)
+    input: List[MessageContentItem] = Field(..., description="Structured input content")
+    context: Optional[ChatSessionContext] = Field(None, description="Optional context override")
+    overrides: Optional[ChatOverrides] = Field(None, description="Optional overrides for this request")
+
+
+class AskMessageResponse(BaseModel):
+    """Response schema for ask message."""
+    user_message: MessageItem = Field(..., description="User message")
+    assistant_message: MessageItem = Field(..., description="Assistant message")
