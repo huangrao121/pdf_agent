@@ -429,6 +429,13 @@ class ChatSessionService:
         order: Optional[str] = None,
     ) -> Tuple[ChatSessionModel, List[MessageModel], Optional[str]]:
         try:
+            has_access = await check_workspace_membership(workspace_id, user_id, self.db_session)
+            if not has_access:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="FORBIDDEN: No permission to access workspace",
+                )
+            
             session_query = select(ChatSessionModel).where(
                 ChatSessionModel.session_id == session_id,
                 ChatSessionModel.workspace_id == workspace_id,
@@ -439,13 +446,6 @@ class ChatSessionService:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="SESSION_NOT_FOUND",
-                )
-
-            has_access = await check_workspace_membership(workspace_id, user_id, self.db_session)
-            if not has_access:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="FORBIDDEN: No permission to access workspace",
                 )
 
             if session_model.owner_user_id != user_id:
