@@ -191,6 +191,19 @@ class TestChatSessionCreateAPI:
         assert response.status_code == 404
 
     @pytest.mark.asyncio
+    async def test_create_chat_session_note_not_found(self, test_app, test_user, test_workspace):
+        transport = ASGITransport(app=test_app)
+
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/api/workspaces/{test_workspace.workspace_id}/chat/sessions",
+                params={"user_id": test_user.user_id},
+                json={"mode": "ask", "context": {"note_id": 99999}},
+            )
+
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
     async def test_create_chat_session_anchor_invalid(self, test_app, test_user, test_workspace):
         transport = ASGITransport(app=test_app)
 
@@ -199,6 +212,42 @@ class TestChatSessionCreateAPI:
                 f"/api/workspaces/{test_workspace.workspace_id}/chat/sessions",
                 params={"user_id": test_user.user_id},
                 json={"mode": "ask", "context": {"anchor_ids": [99999]}},
+            )
+
+        assert response.status_code == 422
+
+    @pytest.mark.asyncio
+    async def test_create_chat_session_anchor_workspace_mismatch(self, test_app, db_session, test_user, test_workspace, test_doc):
+        other_workspace = WorkspaceModel(
+            name="Other Workspace",
+            owner_user_id=test_user.user_id,
+        )
+        db_session.add(other_workspace)
+        await db_session.commit()
+        await db_session.refresh(other_workspace)
+
+        other_anchor = AnchorModel(
+            created_by_user_id=test_user.user_id,
+            note_id=None,
+            doc_id=test_doc.doc_id,
+            chunk_id=None,
+            workspace_id=other_workspace.workspace_id,
+            page=1,
+            quoted_text="quote",
+            locator={"type": "pdf_quadpoints"},
+            locator_hash="hash_anchor_other_ws",
+        )
+        db_session.add(other_anchor)
+        await db_session.commit()
+        await db_session.refresh(other_anchor)
+
+        transport = ASGITransport(app=test_app)
+
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/api/workspaces/{test_workspace.workspace_id}/chat/sessions",
+                params={"user_id": test_user.user_id},
+                json={"mode": "ask", "context": {"doc_id": test_doc.doc_id, "doc_anchor_ids": [other_anchor.anchor_id]}},
             )
 
         assert response.status_code == 422

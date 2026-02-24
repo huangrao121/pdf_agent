@@ -501,8 +501,7 @@ class ChatSessionService:
                 is_new_user_message = True
 
             anchor_ids = normalized_context.get("anchor_ids") or []
-            doc_anchor_ids = normalized_context.get("doc_anchor_ids") or []
-            anchor_map = await self._load_anchors(list({*anchor_ids, *doc_anchor_ids}))
+            anchor_map = await self._load_anchors(list({*anchor_ids}))
             citations = self._build_citations(list(anchor_map.values()))
 
             assistant_text = (
