@@ -82,7 +82,7 @@ class ChatSessionService:
         anchors = result.scalars().all()
         if len(anchors) != len(anchor_list):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="ANCHOR_INVALID: One or more anchors not found",
             )
         return {anchor.anchor_id: anchor for anchor in anchors}
@@ -219,7 +219,7 @@ class ChatSessionService:
                 )
             if doc_id is not None and note.doc_id is not None and note.doc_id != int(doc_id):
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail="NOTE_DOC_MISMATCH: Note does not belong to document",
                 )
 
@@ -235,12 +235,12 @@ class ChatSessionService:
         for anchor in anchor_map.values():
             if anchor.workspace_id != workspace_id:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail="ANCHOR_INVALID: Anchor not in workspace",
                 )
             if note_id is not None and anchor.note_id != int(note_id):
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail="ANCHOR_INVALID: Anchor not associated with note",
                 )
 
@@ -248,12 +248,12 @@ class ChatSessionService:
         for anchor in doc_anchor_map.values():
             if anchor.workspace_id != workspace_id:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail="ANCHOR_INVALID: Anchor not in workspace",
                 )
             if doc_id is not None and anchor.doc_id != int(doc_id):
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail="ANCHOR_INVALID: Anchor not associated with document",
                 )
 
