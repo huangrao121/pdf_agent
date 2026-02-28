@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ChatSessionMode(str, Enum):
@@ -187,6 +187,7 @@ class ChatOverrides(BaseModel):
     model: Optional[str] = Field(None, description="Override model name")
     temperature: Optional[float] = Field(None, description="Override sampling temperature", ge=0.0, le=2.0)
     top_p: Optional[float] = Field(None, description="Override top-p sampling", gt=0.0, le=1.0)
+    system_prompt: Optional[str] = Field(None, description="Override system prompt")
     retrieval: Optional[ChatOverridesRetrieval] = Field(None, description="Override retrieval settings")
 
 
@@ -202,3 +203,63 @@ class AskMessageResponse(BaseModel):
     """Response schema for ask message."""
     user_message: MessageItem = Field(..., description="User message")
     assistant_message: MessageItem = Field(..., description="Assistant message")
+
+
+class NotePatchAction(BaseModel):
+    """Request details for note patch actions."""
+    enabled: bool = Field(False, description="Enable note patch")
+    mode: str = Field("auto", description="Patch mode: auto or preview")
+    note_id: Optional[int] = Field(None, description="Note ID to patch", ge=1)
+    base_revision: Optional[int] = Field(None, description="Base note revision for concurrency control", ge=1)
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v: str) -> str:
+        if v not in {"auto", "preview"}:
+            raise ValueError("mode must be 'auto' or 'preview'")
+        return v
+
+    @model_validator(mode="after")
+    def validate_required_fields(self):
+        if self.enabled:
+            if self.note_id is None or self.base_revision is None:
+                raise ValueError("note_id and base_revision are required when note_patch is enabled")
+        return self
+
+
+class AssistMessageActions(BaseModel):
+    """Actions for assist/agent messages."""
+    note_patch: Optional[NotePatchAction] = Field(None, description="Note patch action")
+
+
+class NotePatchOperation(BaseModel):
+    """Single note patch operation."""
+    op: str = Field(..., description="Patch operation type")
+    path: str = Field(..., description="JSON pointer path")
+    value: Optional[str] = Field(None, description="Patch operation value")
+
+
+class NotePatchResult(BaseModel):
+    """Note patch result payload."""
+    note_id: int = Field(..., description="Note ID")
+    base_revision: int = Field(..., description="Base note revision")
+    applied_revision: Optional[int] = Field(None, description="Applied revision if patch was applied")
+    ops: List[NotePatchOperation] = Field(..., description="Patch operations")
+    status: str = Field(..., description="Patch status: applied or preview")
+
+
+class AssistMessageRequest(BaseModel):
+    """Request schema for assist/agent message."""
+    client_request_id: str = Field(..., description="Client request ID for idempotency", min_length=1)
+    content: List[MessageContentItem] = Field(..., description="Structured input content", min_length=1)
+    context: Optional[ChatSessionContext] = Field(None, description="Optional context override")
+    actions: Optional[AssistMessageActions] = Field(None, description="Optional actions for this request")
+    overrides: Optional[ChatOverrides] = Field(None, description="Optional overrides for this request")
+
+
+class AssistMessageResponse(BaseModel):
+    """Response schema for assist/agent message."""
+    session_id: int = Field(..., description="Chat session ID")
+    user_message: MessageItem = Field(..., description="User message")
+    assistant_message: MessageItem = Field(..., description="Assistant message")
+    note_patch: Optional[NotePatchResult] = Field(None, description="Note patch result")
