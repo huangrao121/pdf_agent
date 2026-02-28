@@ -23,15 +23,15 @@ class ChatSessionContext(BaseModel):
 class RetrievalDefaults(BaseModel):
     """Retrieval defaults."""
     enabled: bool = Field(True, description="Enable retrieval")
-    top_k: int = Field(8, description="Number of chunks to retrieve")
+    top_k: int = Field(8, description="Number of chunks to retrieve", ge=1)
     rerank: bool = Field(False, description="Enable reranking")
 
 
 class ChatDefaults(BaseModel):
     """Default chat settings."""
     model: str = Field("gpt-4.1-mini", description="Model name")
-    temperature: float = Field(0.2, description="Sampling temperature")
-    top_p: float = Field(1.0, description="Top-p sampling")
+    temperature: float = Field(0.2, description="Sampling temperature", ge=0.0, le=2.0)
+    top_p: float = Field(1.0, description="Top-p sampling", gt=0.0, le=1.0)
     system_prompt: Optional[str] = Field(None, description="System prompt")
     retrieval: RetrievalDefaults = Field(default_factory=RetrievalDefaults)
 
@@ -95,7 +95,14 @@ class ChatSessionDetail(BaseModel):
 class MessageContentItem(BaseModel):
     """Content block for a message."""
     type: str = Field(..., description="Content type, e.g., text")
-    text: str = Field(..., description="Text content")
+    text: str = Field(..., description="Text content", min_length=1)
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v: str) -> str:
+        if v != "text":
+            raise ValueError("type must be 'text'")
+        return v
 
 
 class MessageItem(BaseModel):
@@ -104,6 +111,7 @@ class MessageItem(BaseModel):
     role: str = Field(..., description="Message role")
     content: List[MessageContentItem] = Field(..., description="Message content blocks")
     citations: Optional[List[dict]] = Field(None, description="Citations")
+    usage: Optional[dict] = Field(None, description="Token usage metadata")
     created_at: datetime = Field(..., description="Message creation timestamp")
 
 
@@ -165,3 +173,32 @@ class ChatErrorDetail(BaseModel):
 class ChatErrorResponse(BaseModel):
     """Error response schema."""
     error: ChatErrorDetail = Field(..., description="Error details")
+
+
+class ChatOverridesRetrieval(BaseModel):
+    """Overrides for retrieval settings."""
+    enabled: Optional[bool] = Field(None, description="Enable retrieval")
+    top_k: Optional[int] = Field(None, description="Number of chunks to retrieve", ge=1)
+    rerank: Optional[bool] = Field(None, description="Enable reranking")
+
+
+class ChatOverrides(BaseModel):
+    """Overrides for a single request."""
+    model: Optional[str] = Field(None, description="Override model name")
+    temperature: Optional[float] = Field(None, description="Override sampling temperature", ge=0.0, le=2.0)
+    top_p: Optional[float] = Field(None, description="Override top-p sampling", gt=0.0, le=1.0)
+    retrieval: Optional[ChatOverridesRetrieval] = Field(None, description="Override retrieval settings")
+
+
+class AskMessageRequest(BaseModel):
+    """Request schema for ask message."""
+    client_request_id: str = Field(..., description="Client request ID for idempotency", min_length=1)
+    input: List[MessageContentItem] = Field(..., description="Structured input content", min_length=1)
+    context: Optional[ChatSessionContext] = Field(None, description="Optional context override")
+    overrides: Optional[ChatOverrides] = Field(None, description="Optional overrides for this request")
+
+
+class AskMessageResponse(BaseModel):
+    """Response schema for ask message."""
+    user_message: MessageItem = Field(..., description="User message")
+    assistant_message: MessageItem = Field(..., description="Assistant message")
