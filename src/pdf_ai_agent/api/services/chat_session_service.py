@@ -15,6 +15,7 @@ from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pdf_ai_agent.api.utilties.workspace_utils import check_workspace_membership
+from pdf_ai_agent.api.services.note_service import NoteService
 from pdf_ai_agent.config.database.models.model_document import (
     AnchorModel,
     ChatSessionModel,
@@ -29,7 +30,7 @@ from pdf_ai_agent.config.database.models.model_user import WorkspaceModel
 logger = logging.getLogger(__name__)
 
 DEFAULT_TITLE = "New chat"
-ALLOWED_MODELS = {"gpt-4.1-mini"}
+ALLOWED_MODELS = {"gpt-4.1-mini", "gpt-4.1"}
 
 DEFAULT_RETRIEVAL: Dict[str, Any] = {
     "enabled": True,
@@ -386,6 +387,31 @@ class ChatSessionService:
             )
         return citations
 
+    @staticmethod
+    def _build_assist_patch_content(note_markdown: str, input_text: str) -> str:
+        normalized_input = input_text.strip()
+        if note_markdown:
+            if normalized_input:
+                return (
+                    f"{note_markdown.rstrip()}\n\n---\n\n"
+                    f"MVP Assist Update:\n{normalized_input}\n"
+                )
+            return note_markdown
+        return f"MVP Assist Update:\n{normalized_input}\n" if normalized_input else ""
+
+    @staticmethod
+    def _validate_note_patch_parsimony(original: str, updated: str) -> None:
+        if not updated.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="PATCH_INVALID: patch content is empty",
+            )
+        if original and len(updated) > max(len(original) * 10, len(original) + 2000):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="PATCH_INVALID: patch violates parsimony",
+            )
+
     async def _get_session_for_user(
         self,
         workspace_id: int,
@@ -460,7 +486,7 @@ class ChatSessionService:
                 MessageModel.session_id == session_id,
                 MessageModel.workspace_id == workspace_id,
                 MessageModel.role == RoleEnum.USER.value,
-                MessageModel.context["client_request_id"].astext == normalized_client_request_id,
+                MessageModel.context["client_request_id"].as_string() == normalized_client_request_id,
             )
             existing_result = await self.db_session.execute(existing_query)
             existing_user_message = existing_result.scalar_one_or_none()
@@ -475,7 +501,7 @@ class ChatSessionService:
                     MessageModel.session_id == session_id,
                     MessageModel.workspace_id == workspace_id,
                     MessageModel.role == RoleEnum.ASSISTANT.value,
-                    MessageModel.context["parent_user_message_id"].astext == str(existing_user_message.message_id),
+                    MessageModel.context["parent_user_message_id"].as_string() == str(existing_user_message.message_id),
                 )
                 assistant_result = await self.db_session.execute(assistant_query)
                 existing_assistant = assistant_result.scalar_one_or_none()
@@ -664,6 +690,225 @@ class ChatSessionService:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="DB_QUERY_FAILED",
+            )
+
+    async def send_assist_message(
+        self,
+        workspace_id: int,
+        session_id: int,
+        user_id: int,
+        client_request_id: str,
+        content_items: List[Dict[str, Any]],
+        context: Optional[Dict[str, Any]],
+        actions: Optional[Dict[str, Any]],
+        overrides: Optional[Dict[str, Any]],
+    ) -> Tuple[MessageModel, MessageModel, Optional[Dict[str, Any]]]:
+        try:
+            has_access = await check_workspace_membership(workspace_id, user_id, self.db_session)
+            if not has_access:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="FORBIDDEN: No permission to access workspace",
+                )
+
+            session_model = await self._get_session_for_user(workspace_id, session_id, user_id)
+
+            normalized_client_request_id = client_request_id.strip()
+            if not normalized_client_request_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="INVALID_ARGUMENT: client_request_id is required",
+                )
+
+            normalized_input, input_text = self._normalize_input(content_items)
+
+            base_context = session_model.context_json or deepcopy(DEFAULT_CONTEXT)
+            normalized_context = (
+                await self._validate_context(workspace_id, context)
+                if context is not None
+                else await self._validate_context(workspace_id, base_context)
+            )
+
+            base_defaults = session_model.defaults_json or deepcopy(DEFAULT_DEFAULTS)
+            effective_defaults = self._apply_overrides(base_defaults, overrides)
+
+            if actions is not None and not isinstance(actions, dict):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="INVALID_ARGUMENT: actions must be an object",
+                )
+            note_patch_action = None
+            if actions:
+                note_patch_action = actions.get("note_patch")
+                if note_patch_action is not None and not isinstance(note_patch_action, dict):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="INVALID_ARGUMENT: actions.note_patch must be an object",
+                    )
+
+            request_payload = {
+                "content": normalized_input,
+                "context": normalized_context,
+                "actions": note_patch_action,
+                "overrides": overrides,
+            }
+            request_hash = self._compute_request_hash(request_payload)
+
+            existing_query = select(MessageModel).where(
+                MessageModel.session_id == session_id,
+                MessageModel.workspace_id == workspace_id,
+                MessageModel.role == RoleEnum.USER.value,
+                MessageModel.context["client_request_id"].as_string() == normalized_client_request_id,
+            )
+            existing_result = await self.db_session.execute(existing_query)
+            existing_user_message = existing_result.scalar_one_or_none()
+            if existing_user_message is not None:
+                existing_context = existing_user_message.context or {}
+                if existing_context.get("request_hash") != request_hash:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="CLIENT_REQUEST_ID_CONFLICT: client_request_id already used",
+                    )
+                assistant_query = select(MessageModel).where(
+                    MessageModel.session_id == session_id,
+                    MessageModel.workspace_id == workspace_id,
+                    MessageModel.role == RoleEnum.ASSISTANT.value,
+                    MessageModel.context["parent_user_message_id"].as_string() == str(existing_user_message.message_id),
+                )
+                assistant_result = await self.db_session.execute(assistant_query)
+                existing_assistant = assistant_result.scalar_one_or_none()
+                if existing_assistant is not None:
+                    existing_note_patch = (existing_assistant.context or {}).get("note_patch")
+                    return existing_user_message, existing_assistant, existing_note_patch
+                user_message = existing_user_message
+                is_new_user_message = False
+            else:
+                user_message = MessageModel(
+                    session_id=session_id,
+                    workspace_id=workspace_id,
+                    sender_user_id=user_id,
+                    content=input_text,
+                    role=RoleEnum.USER.value,
+                    context={
+                        "client_request_id": normalized_client_request_id,
+                        "request_hash": request_hash,
+                    },
+                )
+                self.db_session.add(user_message)
+                await self.db_session.flush()
+                await self.db_session.refresh(user_message)
+                is_new_user_message = True
+
+            note_patch_result = None
+            if note_patch_action and note_patch_action.get("enabled"):
+                mode = note_patch_action.get("mode", "auto")
+                note_id = note_patch_action.get("note_id")
+                base_revision = note_patch_action.get("base_revision")
+                if note_id is None or base_revision is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="INVALID_ARGUMENT: note_id and base_revision are required",
+                    )
+                if mode not in {"auto", "preview"}:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="INVALID_ARGUMENT: mode must be auto or preview",
+                    )
+                if normalized_context.get("note_id") is None or int(note_id) != int(normalized_context["note_id"]):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="INVALID_ARGUMENT: note_id must match context.note_id",
+                    )
+
+                note = await self._get_note(int(note_id))
+                if note is None or note.workspace_id != workspace_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="NOTE_NOT_FOUND: Note not found",
+                    )
+                if int(base_revision) != int(note.version or 0):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="REVISION_CONFLICT: base_revision mismatch",
+                    )
+
+                patch_content = self._build_assist_patch_content(note.markdown or "", input_text)
+                self._validate_note_patch_parsimony(note.markdown or "", patch_content)
+
+                ops = [{"op": "replace", "path": "/content", "value": patch_content}]
+                applied_revision = None
+                status_value = "preview"
+                if mode == "auto":
+                    note_service = NoteService(self.db_session)
+                    updated_note = await note_service.patch_note(
+                        workspace_id=workspace_id,
+                        note_id=int(note_id),
+                        user_id=user_id,
+                        content_markdown=patch_content,
+                    )
+                    applied_revision = updated_note.version
+                    status_value = "applied"
+
+                note_patch_result = {
+                    "note_id": int(note_id),
+                    "base_revision": int(base_revision),
+                    "applied_revision": applied_revision,
+                    "ops": ops,
+                    "status": status_value,
+                }
+
+            anchor_ids = normalized_context.get("anchor_ids") or []
+            doc_anchor_ids = normalized_context.get("doc_anchor_ids") or []
+            anchor_map = await self._load_anchors(list({*anchor_ids, *doc_anchor_ids}))
+            citations = self._build_citations(list(anchor_map.values()))
+
+            assistant_text = (
+                "MVP assist response: "
+                f"{input_text[:500]}"
+                + ("..." if len(input_text) > 500 else "")
+            )
+            usage = self._estimate_usage(input_text, assistant_text)
+
+            assistant_context = {
+                "client_request_id": normalized_client_request_id,
+                "parent_user_message_id": user_message.message_id,
+                "model": effective_defaults.get("model"),
+                "usage": usage,
+                "request_hash": request_hash,
+            }
+            if note_patch_result is not None:
+                assistant_context["note_patch"] = note_patch_result
+
+            assistant_message = MessageModel(
+                session_id=session_id,
+                workspace_id=workspace_id,
+                sender_user_id=None,
+                content=assistant_text,
+                role=RoleEnum.ASSISTANT.value,
+                citation=citations or None,
+                context=assistant_context,
+            )
+            self.db_session.add(assistant_message)
+            await self.db_session.flush()
+            await self.db_session.refresh(assistant_message)
+
+            session_model.last_message_at = assistant_message.created_at
+            increment = 2 if is_new_user_message else 1
+            session_model.message_count = (session_model.message_count or 0) + increment
+            session_model.updated_at = datetime.now(timezone.utc)
+            await self.db_session.commit()
+
+            return user_message, assistant_message, note_patch_result
+
+        except HTTPException:
+            await self.db_session.rollback()
+            raise
+        except Exception as exc:
+            await self.db_session.rollback()
+            logger.error("Send assist message failed: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="INTERNAL_ERROR: An unexpected error occurred",
             )
 
     @staticmethod

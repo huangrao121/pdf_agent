@@ -25,6 +25,10 @@ from pdf_ai_agent.api.schemas.chat_schemas import (
     GetChatSessionResponse,
     AskMessageRequest,
     AskMessageResponse,
+    AssistMessageRequest,
+    AssistMessageResponse,
+    NotePatchResult,
+    NotePatchOperation,
 )
 from pdf_ai_agent.api.services.chat_session_service import ChatSessionService
 from pdf_ai_agent.config.database.init_database import get_db_session
@@ -384,6 +388,139 @@ async def ask_message(
         raise
     except Exception as exc:
         logger.error("Unexpected error in ask_message: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="INTERNAL_ERROR: An unexpected error occurred",
+        )
+
+
+@router.post(
+    "/{workspace_id}/chat/sessions/{session_id}/message:assist",
+    response_model=AssistMessageResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        400: {"model": ChatErrorResponse, "description": "Invalid request"},
+        401: {"model": ChatErrorResponse, "description": "Unauthorized"},
+        403: {"model": ChatErrorResponse, "description": "Forbidden - no access to workspace"},
+        404: {"model": ChatErrorResponse, "description": "Session/note not found"},
+        409: {"model": ChatErrorResponse, "description": "Conflict"},
+        422: {"model": ChatErrorResponse, "description": "Patch validation failed"},
+        500: {"model": ChatErrorResponse, "description": "Internal server error"},
+    },
+)
+async def assist_message(
+    request: AssistMessageRequest,
+    workspace_id: int = Path(..., description="Workspace ID", gt=0),
+    session_id: int = Path(..., description="Session ID", gt=0),
+    user_id: int = Query(..., description="User ID (dev mode)"),
+    stream: bool = Query(True, description="Stream response via SSE"),
+    chat_service: ChatSessionService = Depends(get_chat_session_service),
+):
+    """
+    Send a message to a chat session in assist/agent mode.
+
+    **Authentication (Dev Mode):**
+    - Requires `user_id` in query parameter
+    """
+    try:
+        content_items = [item.model_dump() for item in request.content]
+        context = request.context.model_dump() if request.context else None
+        actions = request.actions.model_dump(exclude_none=True) if request.actions else None
+        overrides = request.overrides.model_dump(exclude_none=True) if request.overrides else None
+
+        user_message, assistant_message, note_patch = await chat_service.send_assist_message(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            user_id=user_id,
+            client_request_id=request.client_request_id,
+            content_items=content_items,
+            context=context,
+            actions=actions,
+            overrides=overrides,
+        )
+
+        user_message_item = MessageItem(
+            id=user_message.message_id,
+            role=user_message.role,
+            content=[MessageContentItem(type="text", text=user_message.content)],
+            citations=None,
+            usage=None,
+            created_at=user_message.created_at,
+        )
+        assistant_usage = (assistant_message.context or {}).get("usage")
+        assistant_message_item = MessageItem(
+            id=assistant_message.message_id,
+            role=assistant_message.role,
+            content=[MessageContentItem(type="text", text=assistant_message.content)],
+            citations=assistant_message.citation or [],
+            usage=assistant_usage,
+            created_at=assistant_message.created_at,
+        )
+
+        note_patch_item = None
+        if note_patch:
+            note_patch_item = NotePatchResult(
+                note_id=note_patch["note_id"],
+                base_revision=note_patch["base_revision"],
+                applied_revision=note_patch.get("applied_revision"),
+                ops=[NotePatchOperation(**op) for op in note_patch.get("ops", [])],
+                status=note_patch["status"],
+            )
+
+        if not stream:
+            return AssistMessageResponse(
+                session_id=session_id,
+                user_message=user_message_item,
+                assistant_message=assistant_message_item,
+                note_patch=note_patch_item,
+            )
+
+        async def event_stream():
+            yield _format_sse_event(
+                "message.create",
+                {"user_message_id": user_message.message_id},
+            )
+            if note_patch:
+                yield _format_sse_event(
+                    "patch.preview",
+                    {
+                        "note_id": note_patch["note_id"],
+                        "base_revision": note_patch["base_revision"],
+                        "ops": note_patch.get("ops", []),
+                    },
+                )
+                if note_patch.get("status") == "applied":
+                    yield _format_sse_event(
+                        "patch.applied",
+                        {
+                            "note_id": note_patch["note_id"],
+                            "base_revision": note_patch["base_revision"],
+                            "applied_revision": note_patch.get("applied_revision"),
+                        },
+                    )
+
+            text = assistant_message.content or ""
+            chunk_size = 50
+            for start in range(0, len(text), chunk_size):
+                yield _format_sse_event(
+                    "assistant.delta",
+                    {"text": text[start : start + chunk_size]},
+                )
+            yield _format_sse_event(
+                "assistant.completed",
+                {
+                    "assistant_message_id": assistant_message.message_id,
+                    "citations": assistant_message.citation or [],
+                    "usage": assistant_usage or {},
+                },
+            )
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Unexpected error in assist_message: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="INTERNAL_ERROR: An unexpected error occurred",

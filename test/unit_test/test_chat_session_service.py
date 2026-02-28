@@ -106,6 +106,26 @@ async def test_doc_anchor(db_session, test_user, test_workspace, test_doc):
     return anchor
 
 
+@pytest.fixture
+async def test_chat_session(db_session, test_user, test_workspace, test_note):
+    service = ChatSessionService(db_session=db_session)
+    session = await service.create_session(
+        workspace_id=test_workspace.workspace_id,
+        user_id=test_user.user_id,
+        title="Assist Session",
+        mode="assist",
+        context={
+            "note_id": test_note.note_id,
+            "anchor_ids": [],
+            "doc_id": None,
+            "doc_anchor_ids": [],
+        },
+        defaults=None,
+        client_request_id=None,
+    )
+    return session
+
+
 class TestChatSessionService:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("mode", ["ask", "assist", "agent"])
@@ -214,6 +234,69 @@ class TestChatSessionService:
             )
 
         assert exc_info.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_send_assist_message_preview(self, db_session, test_user, test_workspace, test_note, test_chat_session):
+        service = ChatSessionService(db_session=db_session)
+
+        user_message, assistant_message, note_patch = await service.send_assist_message(
+            workspace_id=test_workspace.workspace_id,
+            session_id=test_chat_session.session_id,
+            user_id=test_user.user_id,
+            client_request_id="req_preview_1",
+            content_items=[{"type": "text", "text": "Rewrite this note into bullets."}],
+            context=None,
+            actions={
+                "note_patch": {
+                    "enabled": True,
+                    "mode": "preview",
+                    "note_id": test_note.note_id,
+                    "base_revision": test_note.version,
+                }
+            },
+            overrides=None,
+        )
+
+        assert user_message.message_id is not None
+        assert assistant_message.message_id is not None
+        assert note_patch is not None
+        assert note_patch["status"] == "preview"
+        assert note_patch["applied_revision"] is None
+        assert note_patch["note_id"] == test_note.note_id
+        assert note_patch["base_revision"] == test_note.version
+        assert note_patch["ops"]
+
+    @pytest.mark.asyncio
+    async def test_send_assist_message_revision_conflict(
+        self,
+        db_session,
+        test_user,
+        test_workspace,
+        test_note,
+        test_chat_session,
+    ):
+        service = ChatSessionService(db_session=db_session)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await service.send_assist_message(
+                workspace_id=test_workspace.workspace_id,
+                session_id=test_chat_session.session_id,
+                user_id=test_user.user_id,
+                client_request_id="req_conflict_1",
+                content_items=[{"type": "text", "text": "Update note."}],
+                context=None,
+                actions={
+                    "note_patch": {
+                        "enabled": True,
+                        "mode": "auto",
+                        "note_id": test_note.note_id,
+                        "base_revision": test_note.version + 1,
+                    }
+                },
+                overrides=None,
+            )
+
+        assert exc_info.value.status_code == 409
 
     @pytest.mark.asyncio
     async def test_create_session_context_anchor_validation(
