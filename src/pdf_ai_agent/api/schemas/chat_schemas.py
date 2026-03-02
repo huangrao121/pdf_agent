@@ -262,3 +262,18 @@ class AssistMessageResponse(BaseModel):
     user_message: MessageItem = Field(..., description="User message")
     assistant_message: MessageItem = Field(..., description="Assistant message")
     note_patch: Optional[NotePatchResult] = Field(None, description="Note patch result")
+
+
+class CancelMessageRequest(BaseModel):
+    """Request schema for cancel streaming."""
+    client_request_id: str = Field(..., description="Client request ID for idempotency", min_length=1)
+    reason: Optional[str] = Field(None, description="Optional cancel reason")
+
+
+class CancelMessageResponse(BaseModel):
+    """Response schema for cancel streaming."""
+    message_id: int = Field(..., description="Message ID")
+    status: Optional[str] = Field(None, description="Message status after cancel")
+    cancelled_at: Optional[datetime] = Field(None, description="Cancel timestamp")
+    generation_id: Optional[str] = Field(None, description="Generation ID")
+    applied_patch: bool = Field(..., description="Whether patch was applied")

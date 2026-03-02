@@ -6,6 +6,7 @@ import logging
 import base64
 import json
 import hashlib
+import uuid
 from copy import deepcopy
 from typing import Any, Dict, Iterable, Optional, Tuple, List
 from datetime import datetime, timezone
@@ -24,6 +25,7 @@ from pdf_ai_agent.config.database.models.model_document import (
     NoteModel,
     MessageModel,
     RoleEnum,
+    MessageStatusEnum,
 )
 from pdf_ai_agent.config.database.models.model_user import WorkspaceModel
 
@@ -363,6 +365,10 @@ class ChatSessionService:
         return hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
 
     @staticmethod
+    def _generate_generation_id() -> str:
+        return uuid.uuid4().hex
+
+    @staticmethod
     def _estimate_usage(prompt_text: str, completion_text: str) -> Dict[str, int]:
         prompt_tokens = len(prompt_text.split())
         completion_tokens = len(completion_text.split())
@@ -445,6 +451,7 @@ class ChatSessionService:
         input_items: List[Dict[str, Any]],
         context: Optional[Dict[str, Any]],
         overrides: Optional[Dict[str, Any]],
+        stream: bool,
     ) -> Tuple[MessageModel, MessageModel]:
         try:
             has_access = await check_workspace_membership(workspace_id, user_id, self.db_session)
@@ -536,6 +543,10 @@ class ChatSessionService:
                 + ("..." if len(input_text) > 500 else "")
             )
             usage = self._estimate_usage(input_text, assistant_text)
+            generation_id = self._generate_generation_id()
+            message_status = MessageStatusEnum.STREAMING.value if stream else MessageStatusEnum.SUCCEEDED.value
+            started_at = datetime.now(timezone.utc)
+            completed_at = None if stream else started_at
 
             assistant_message = MessageModel(
                 session_id=session_id,
@@ -543,6 +554,10 @@ class ChatSessionService:
                 sender_user_id=None,
                 content=assistant_text,
                 role=RoleEnum.ASSISTANT.value,
+                status=message_status,
+                generation_id=generation_id,
+                started_at=started_at,
+                completed_at=completed_at,
                 citation=citations or None,
                 context={
                     "client_request_id": normalized_client_request_id,
@@ -557,6 +572,12 @@ class ChatSessionService:
             await self.db_session.refresh(assistant_message)
 
             session_model.last_message_at = assistant_message.created_at
+            if stream:
+                session_model.status = "streaming"
+                session_model.active_generation_id = generation_id
+            else:
+                session_model.status = "idle"
+                session_model.active_generation_id = None
             increment = 2 if is_new_user_message else 1
             session_model.message_count = (session_model.message_count or 0) + increment
             session_model.updated_at = datetime.now(timezone.utc)
@@ -702,6 +723,7 @@ class ChatSessionService:
         context: Optional[Dict[str, Any]],
         actions: Optional[Dict[str, Any]],
         overrides: Optional[Dict[str, Any]],
+        stream: bool,
     ) -> Tuple[MessageModel, MessageModel, Optional[Dict[str, Any]]]:
         try:
             has_access = await check_workspace_membership(workspace_id, user_id, self.db_session)
@@ -872,6 +894,10 @@ class ChatSessionService:
                 + ("..." if len(input_text) > 500 else "")
             )
             usage = self._estimate_usage(input_text, assistant_text)
+            generation_id = self._generate_generation_id()
+            message_status = MessageStatusEnum.STREAMING.value if stream else MessageStatusEnum.SUCCEEDED.value
+            started_at = datetime.now(timezone.utc)
+            completed_at = None if stream else started_at
 
             assistant_context = {
                 "client_request_id": normalized_client_request_id,
@@ -889,6 +915,10 @@ class ChatSessionService:
                 sender_user_id=None,
                 content=assistant_text,
                 role=RoleEnum.ASSISTANT.value,
+                status=message_status,
+                generation_id=generation_id,
+                started_at=started_at,
+                completed_at=completed_at,
                 citation=citations or None,
                 context=assistant_context,
             )
@@ -897,6 +927,12 @@ class ChatSessionService:
             await self.db_session.refresh(assistant_message)
 
             session_model.last_message_at = assistant_message.created_at
+            if stream:
+                session_model.status = "streaming"
+                session_model.active_generation_id = generation_id
+            else:
+                session_model.status = "idle"
+                session_model.active_generation_id = None
             increment = 2 if is_new_user_message else 1
             session_model.message_count = (session_model.message_count or 0) + increment
             session_model.updated_at = datetime.now(timezone.utc)
@@ -910,6 +946,133 @@ class ChatSessionService:
         except Exception as exc:
             await self.db_session.rollback()
             logger.error("Send assist message failed: %s", exc)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="INTERNAL_ERROR: An unexpected error occurred",
+            )
+
+    async def finalize_message(self, message_id: int) -> MessageModel:
+        result = await self.db_session.execute(
+            select(MessageModel).where(MessageModel.message_id == message_id)
+        )
+        message = result.scalar_one_or_none()
+        if message is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="MESSAGE_NOT_FOUND",
+            )
+        if message.status == MessageStatusEnum.CANCELLED.value:
+            return message
+        if message.status != MessageStatusEnum.SUCCEEDED.value:
+            message.status = MessageStatusEnum.SUCCEEDED.value
+            message.completed_at = datetime.now(timezone.utc)
+            if message.generation_id:
+                session_result = await self.db_session.execute(
+                    select(ChatSessionModel).where(ChatSessionModel.session_id == message.session_id)
+                )
+                session_model = session_result.scalar_one_or_none()
+                if session_model and session_model.active_generation_id == message.generation_id:
+                    session_model.status = "idle"
+                    session_model.active_generation_id = None
+            await self.db_session.commit()
+            await self.db_session.refresh(message)
+        return message
+
+    async def get_message_status(self, message_id: int) -> Optional[str]:
+        result = await self.db_session.execute(
+            select(MessageModel.status).where(MessageModel.message_id == message_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def cancel_message(
+        self,
+        workspace_id: int,
+        session_id: int,
+        user_id: int,
+        message_id: int,
+        client_request_id: str,
+        reason: Optional[str],
+    ) -> MessageModel:
+        try:
+            if not client_request_id.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="INVALID_ARGUMENT: client_request_id is required",
+                )
+
+            has_access = await check_workspace_membership(workspace_id, user_id, self.db_session)
+            if not has_access:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="FORBIDDEN: No permission to access workspace",
+                )
+
+            await self._get_session_for_user(workspace_id, session_id, user_id)
+
+            query = select(MessageModel).where(
+                MessageModel.message_id == message_id,
+                MessageModel.session_id == session_id,
+                MessageModel.workspace_id == workspace_id,
+            )
+            result = await self.db_session.execute(query)
+            message = result.scalar_one_or_none()
+            if message is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="MESSAGE_NOT_FOUND",
+                )
+            role_value = message.role.value if isinstance(message.role, RoleEnum) else message.role
+            if role_value != RoleEnum.ASSISTANT.value:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="INVALID_ARGUMENT: only assistant messages can be cancelled",
+                )
+
+            current_status = message.status.value if isinstance(message.status, MessageStatusEnum) else message.status
+            if current_status in {
+                MessageStatusEnum.CANCELLED.value,
+                MessageStatusEnum.SUCCEEDED.value,
+                MessageStatusEnum.FAILED.value,
+                MessageStatusEnum.SUPERSEDED.value,
+            }:
+                return message
+
+            if current_status not in {
+                MessageStatusEnum.QUEUED.value,
+                MessageStatusEnum.STREAMING.value,
+            }:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail="INVALID_ARGUMENT: message is not cancellable",
+                )
+
+            message.status = MessageStatusEnum.CANCELLED.value
+            message.cancelled_at = datetime.now(timezone.utc)
+            context = message.context or {}
+            context["cancel_request_id"] = client_request_id
+            if reason:
+                context["cancel_reason"] = reason
+            message.context = context
+
+            if message.generation_id:
+                session_result = await self.db_session.execute(
+                    select(ChatSessionModel).where(ChatSessionModel.session_id == message.session_id)
+                )
+                session_model = session_result.scalar_one_or_none()
+                if session_model and session_model.active_generation_id == message.generation_id:
+                    session_model.status = "idle"
+                    session_model.active_generation_id = None
+
+            await self.db_session.commit()
+            await self.db_session.refresh(message)
+            return message
+
+        except HTTPException:
+            await self.db_session.rollback()
+            raise
+        except Exception as exc:
+            await self.db_session.rollback()
+            logger.error("Cancel message failed: %s", exc)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="INTERNAL_ERROR: An unexpected error occurred",

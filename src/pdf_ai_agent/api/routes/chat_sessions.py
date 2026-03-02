@@ -29,6 +29,8 @@ from pdf_ai_agent.api.schemas.chat_schemas import (
     AssistMessageResponse,
     NotePatchResult,
     NotePatchOperation,
+    CancelMessageRequest,
+    CancelMessageResponse,
 )
 from pdf_ai_agent.api.services.chat_session_service import ChatSessionService
 from pdf_ai_agent.config.database.init_database import get_db_session
@@ -335,6 +337,7 @@ async def ask_message(
             input_items=input_items,
             context=context,
             overrides=overrides,
+            stream=stream,
         )
 
         user_message_item = MessageItem(
@@ -369,10 +372,18 @@ async def ask_message(
             text = assistant_message.content or ""
             chunk_size = 50
             for start in range(0, len(text), chunk_size):
+                status_value = await chat_service.get_message_status(assistant_message.message_id)
+                if status_value == "cancelled":
+                    yield _format_sse_event(
+                        "message.cancelled",
+                        {"message_id": assistant_message.message_id, "status": "cancelled"},
+                    )
+                    return
                 yield _format_sse_event(
                     "assistant.delta",
                     {"text": text[start : start + chunk_size]},
                 )
+            await chat_service.finalize_message(assistant_message.message_id)
             yield _format_sse_event(
                 "assistant.completed",
                 {
@@ -437,6 +448,7 @@ async def assist_message(
             context=context,
             actions=actions,
             overrides=overrides,
+            stream=stream,
         )
 
         user_message_item = MessageItem(
@@ -502,10 +514,18 @@ async def assist_message(
             text = assistant_message.content or ""
             chunk_size = 50
             for start in range(0, len(text), chunk_size):
+                status_value = await chat_service.get_message_status(assistant_message.message_id)
+                if status_value == "cancelled":
+                    yield _format_sse_event(
+                        "message.cancelled",
+                        {"message_id": assistant_message.message_id, "status": "cancelled"},
+                    )
+                    return
                 yield _format_sse_event(
                     "assistant.delta",
                     {"text": text[start : start + chunk_size]},
                 )
+            await chat_service.finalize_message(assistant_message.message_id)
             yield _format_sse_event(
                 "assistant.completed",
                 {
@@ -521,6 +541,67 @@ async def assist_message(
         raise
     except Exception as exc:
         logger.error("Unexpected error in assist_message: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="INTERNAL_ERROR: An unexpected error occurred",
+        )
+
+
+@router.post(
+    "/{workspace_id}/chat/sessions/{session_id}/message:cancel",
+    response_model=CancelMessageResponse,
+    status_code=status.HTTP_200_OK,
+    responses={
+        400: {"model": ChatErrorResponse, "description": "Invalid request"},
+        401: {"model": ChatErrorResponse, "description": "Unauthorized"},
+        403: {"model": ChatErrorResponse, "description": "Forbidden - no access to workspace"},
+        404: {"model": ChatErrorResponse, "description": "Session or message not found"},
+        422: {"model": ChatErrorResponse, "description": "Message is not cancellable"},
+        500: {"model": ChatErrorResponse, "description": "Internal server error"},
+    },
+)
+async def cancel_message(
+    request: CancelMessageRequest,
+    workspace_id: int = Path(..., description="Workspace ID", gt=0),
+    session_id: int = Path(..., description="Session ID", gt=0),
+    user_id: int = Query(..., description="User ID (dev mode)"),
+    message_id: int = Query(..., description="Assistant message ID", gt=0),
+    chat_service: ChatSessionService = Depends(get_chat_session_service),
+):
+    """
+    Cancel streaming for an assistant message.
+
+    **Authentication (Dev Mode):**
+    - Requires `user_id` in query parameter
+    """
+    try:
+        cancelled_message = await chat_service.cancel_message(
+            workspace_id=workspace_id,
+            session_id=session_id,
+            user_id=user_id,
+            message_id=message_id,
+            client_request_id=request.client_request_id,
+            reason=request.reason,
+        )
+
+        applied_patch = False
+        message_context = cancelled_message.context or {}
+        note_patch = message_context.get("note_patch")
+        if isinstance(note_patch, dict) and note_patch.get("status") == "applied":
+            applied_patch = True
+
+        return CancelMessageResponse(
+            message_id=cancelled_message.message_id,
+            status=cancelled_message.status,
+            cancelled_at=cancelled_message.cancelled_at,
+            generation_id=cancelled_message.generation_id,
+            applied_patch=applied_patch,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Unexpected error in cancel_message: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="INTERNAL_ERROR: An unexpected error occurred",

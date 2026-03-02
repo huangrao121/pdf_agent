@@ -374,6 +374,12 @@ class ChatSessionModel(Base, TimestampMixin):
         nullable=False,
         server_default=ChatSessionModeEnum.ASK.value,
     )
+    status: Mapped[str] = mapped_column(
+        Enum("idle", "streaming", name="chat_session_status"),
+        nullable=False,
+        server_default="idle",
+    )
+    active_generation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     context_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     defaults_json: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
     client_request_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -401,6 +407,14 @@ class RoleEnum(PyEnum):
     ASSISTANT = "assistant"
     SYSTEM = "system"
     TOOL = "tool"
+
+class MessageStatusEnum(PyEnum):
+    QUEUED = "queued"
+    STREAMING = "streaming"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    SUPERSEDED = "superseded"
 
 class MessageModel(Base, CreatedMixin):
     """消息模型 - 存储聊天会话中的每条消息
@@ -439,6 +453,14 @@ class MessageModel(Base, CreatedMixin):
         Enum(RoleEnum, values_callable=lambda x: [e.value for e in x]), 
         nullable=False
     )  # 角色：user（用户）、assistant（AI）、system（系统）、tool（工具）
+    status: Mapped[Optional[str]] = mapped_column(
+        Enum(MessageStatusEnum, values_callable=lambda x: [e.value for e in x]),
+        nullable=True,
+    )
+    generation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # RAG 相关信息
     citation: Mapped[Optional[Dict[str, Any]]] = mapped_column(

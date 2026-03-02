@@ -4,7 +4,12 @@ from fastapi import HTTPException
 
 from pdf_ai_agent.api.services.chat_session_service import ChatSessionService
 from pdf_ai_agent.config.database.models.model_user import UserModel, WorkspaceModel
-from pdf_ai_agent.config.database.models.model_document import DocsModel, NoteModel, AnchorModel
+from pdf_ai_agent.config.database.models.model_document import (
+    DocsModel,
+    NoteModel,
+    AnchorModel,
+    MessageStatusEnum,
+)
 
 
 @pytest.fixture
@@ -120,6 +125,21 @@ async def test_chat_session(db_session, test_user, test_workspace, test_note):
             "doc_id": None,
             "doc_anchor_ids": [],
         },
+        defaults=None,
+        client_request_id=None,
+    )
+    return session
+
+
+@pytest.fixture
+async def test_ask_session(db_session, test_user, test_workspace):
+    service = ChatSessionService(db_session=db_session)
+    session = await service.create_session(
+        workspace_id=test_workspace.workspace_id,
+        user_id=test_user.user_id,
+        title="Ask Session",
+        mode="ask",
+        context=None,
         defaults=None,
         client_request_id=None,
     )
@@ -255,6 +275,7 @@ class TestChatSessionService:
                 }
             },
             overrides=None,
+            stream=False,
         )
 
         assert user_message.message_id is not None
@@ -294,9 +315,55 @@ class TestChatSessionService:
                     }
                 },
                 overrides=None,
+                stream=False,
             )
 
         assert exc_info.value.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_cancel_message_streaming(
+        self,
+        db_session,
+        test_user,
+        test_workspace,
+        test_ask_session,
+    ):
+        service = ChatSessionService(db_session=db_session)
+
+        _, assistant_message = await service.send_ask_message(
+            workspace_id=test_workspace.workspace_id,
+            session_id=test_ask_session.session_id,
+            user_id=test_user.user_id,
+            client_request_id="req_stream_1",
+            input_items=[{"type": "text", "text": "Hello there"}],
+            context=None,
+            overrides=None,
+            stream=True,
+        )
+
+        assert assistant_message.status == MessageStatusEnum.STREAMING
+
+        cancelled = await service.cancel_message(
+            workspace_id=test_workspace.workspace_id,
+            session_id=test_ask_session.session_id,
+            user_id=test_user.user_id,
+            message_id=assistant_message.message_id,
+            client_request_id="req_cancel_1",
+            reason="User stopped",
+        )
+
+        assert cancelled.status == MessageStatusEnum.CANCELLED
+
+        cancelled_again = await service.cancel_message(
+            workspace_id=test_workspace.workspace_id,
+            session_id=test_ask_session.session_id,
+            user_id=test_user.user_id,
+            message_id=assistant_message.message_id,
+            client_request_id="req_cancel_2",
+            reason=None,
+        )
+
+        assert cancelled_again.status == MessageStatusEnum.CANCELLED
 
     @pytest.mark.asyncio
     async def test_create_session_context_anchor_validation(
