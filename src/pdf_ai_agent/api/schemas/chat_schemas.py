@@ -15,9 +15,8 @@ class ChatSessionMode(str, Enum):
 class ChatSessionContext(BaseModel):
     """Context for a chat session."""
     note_id: Optional[int] = Field(None, description="Note ID")
-    anchor_ids: Optional[List[int]] = Field(None, description="Anchor IDs for note context")
+    anchor_ids: Optional[List[int]] = Field(None, description="Anchor IDs for document context")
     doc_id: Optional[int] = Field(None, description="Document ID")
-    doc_anchor_ids: Optional[List[int]] = Field(None, description="Anchor IDs for document context")
 
 
 class RetrievalDefaults(BaseModel):

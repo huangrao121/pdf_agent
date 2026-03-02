@@ -754,6 +754,7 @@ class ChatSessionService:
             }
             request_hash = self._compute_request_hash(request_payload)
 
+            # Check the request idempotency
             existing_query = select(MessageModel).where(
                 MessageModel.session_id == session_id,
                 MessageModel.workspace_id == workspace_id,
@@ -763,6 +764,7 @@ class ChatSessionService:
             existing_result = await self.db_session.execute(existing_query)
             existing_user_message = existing_result.scalar_one_or_none()
             if existing_user_message is not None:
+                # If the user message exist, return existing one
                 existing_context = existing_user_message.context or {}
                 if existing_context.get("request_hash") != request_hash:
                     raise HTTPException(
@@ -783,6 +785,7 @@ class ChatSessionService:
                 user_message = existing_user_message
                 is_new_user_message = False
             else:
+                # if user message doesn't exist, add a new one to the database
                 user_message = MessageModel(
                     session_id=session_id,
                     workspace_id=workspace_id,
@@ -832,6 +835,7 @@ class ChatSessionService:
                         detail="REVISION_CONFLICT: base_revision mismatch",
                     )
 
+                # LLM生成的结构化内容placeholder
                 patch_content = self._build_assist_patch_content(note.markdown or "", input_text)
                 self._validate_note_patch_parsimony(note.markdown or "", patch_content)
 
