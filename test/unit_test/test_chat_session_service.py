@@ -341,7 +341,7 @@ class TestChatSessionService:
             stream=True,
         )
 
-        assert assistant_message.status == MessageStatusEnum.STREAMING
+        assert assistant_message.status == MessageStatusEnum.QUEUED
 
         cancelled = await service.cancel_message(
             workspace_id=test_workspace.workspace_id,

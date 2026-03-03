@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from pdf_ai_agent.api.utilties.workspace_utils import check_workspace_membership
 from pdf_ai_agent.api.services.note_service import NoteService
+from pdf_ai_agent.redis.init_redis import get_redis_client
 from pdf_ai_agent.config.database.models.model_document import (
     AnchorModel,
     ChatSessionModel,
@@ -53,6 +54,7 @@ DEFAULT_CONTEXT: Dict[str, Any] = {
     "doc_id": None,
     "doc_anchor_ids": [],
 }
+CANCEL_TTL_SECONDS = 1800
 
 
 class ChatSessionService:
@@ -369,6 +371,21 @@ class ChatSessionService:
         return uuid.uuid4().hex
 
     @staticmethod
+    def _cancel_key(generation_id: str) -> str:
+        return f"chat:gen:{generation_id}:cancelled"
+
+    async def is_generation_cancelled(self, generation_id: Optional[str]) -> bool:
+        if not generation_id:
+            return False
+        try:
+            redis_client = await get_redis_client()
+            value = await redis_client.get(self._cancel_key(generation_id))
+            return value is not None
+        except Exception as exc:
+            logger.warning("Redis cancel check failed: %s", exc)
+            return False
+
+    @staticmethod
     def _estimate_usage(prompt_text: str, completion_text: str) -> Dict[str, int]:
         prompt_tokens = len(prompt_text.split())
         completion_tokens = len(completion_text.split())
@@ -537,14 +554,8 @@ class ChatSessionService:
             anchor_map = await self._load_anchors(list({*anchor_ids}))
             citations = self._build_citations(list(anchor_map.values()))
 
-            assistant_text = (
-                "MVP response: "
-                f"{input_text[:500]}"
-                + ("..." if len(input_text) > 500 else "")
-            )
-            usage = self._estimate_usage(input_text, assistant_text)
             generation_id = self._generate_generation_id()
-            message_status = MessageStatusEnum.STREAMING.value if stream else MessageStatusEnum.SUCCEEDED.value
+            message_status = MessageStatusEnum.QUEUED.value if stream else MessageStatusEnum.SUCCEEDED.value
             started_at = datetime.now(timezone.utc)
             completed_at = None if stream else started_at
 
@@ -552,7 +563,7 @@ class ChatSessionService:
                 session_id=session_id,
                 workspace_id=workspace_id,
                 sender_user_id=None,
-                content=assistant_text,
+                content="",
                 role=RoleEnum.ASSISTANT.value,
                 status=message_status,
                 generation_id=generation_id,
@@ -563,13 +574,25 @@ class ChatSessionService:
                     "client_request_id": normalized_client_request_id,
                     "parent_user_message_id": user_message.message_id,
                     "model": effective_defaults.get("model"),
-                    "usage": usage,
+                    "usage": None,
                     "request_hash": request_hash,
                 },
             )
             self.db_session.add(assistant_message)
             await self.db_session.flush()
             await self.db_session.refresh(assistant_message)
+
+            assistant_text = (
+                "MVP response: "
+                f"{input_text[:500]}"
+                + ("..." if len(input_text) > 500 else "")
+            )
+            if not stream:
+                assistant_message.content = assistant_text
+                assistant_message.context = {
+                    **(assistant_message.context or {}),
+                    "usage": self._estimate_usage(input_text, assistant_text),
+                }
 
             session_model.last_message_at = assistant_message.created_at
             if stream:
@@ -595,6 +618,42 @@ class ChatSessionService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="INTERNAL_ERROR: An unexpected error occurred",
             )
+
+    async def start_streaming_message(
+        self,
+        message_id: int,
+        generation_id: Optional[str],
+    ) -> MessageModel:
+        """Mark a queued assistant message as streaming.
+
+        Idempotent: if already streaming/succeeded/cancelled, it won't regress.
+        """
+        result = await self.db_session.execute(
+            select(MessageModel).where(MessageModel.message_id == message_id)
+        )
+        message = result.scalar_one_or_none()
+        if message is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="MESSAGE_NOT_FOUND",
+            )
+
+        current_status = message.status.value if isinstance(message.status, MessageStatusEnum) else message.status
+        if current_status == MessageStatusEnum.QUEUED.value:
+            message.status = MessageStatusEnum.STREAMING.value
+            message.started_at = message.started_at or datetime.now(timezone.utc)
+            if generation_id:
+                session_result = await self.db_session.execute(
+                    select(ChatSessionModel).where(ChatSessionModel.session_id == message.session_id)
+                )
+                session_model = session_result.scalar_one_or_none()
+                if session_model and session_model.active_generation_id != generation_id:
+                    session_model.status = "streaming"
+                    session_model.active_generation_id = generation_id
+            await self.db_session.commit()
+            await self.db_session.refresh(message)
+
+        return message
 
     @staticmethod
     def encode_cursor(session_id: int, updated_at: datetime) -> str:
@@ -951,7 +1010,12 @@ class ChatSessionService:
                 detail="INTERNAL_ERROR: An unexpected error occurred",
             )
 
-    async def finalize_message(self, message_id: int) -> MessageModel:
+    async def finalize_message(
+        self,
+        message_id: int,
+        content: Optional[str] = None,
+        usage: Optional[Dict[str, int]] = None,
+    ) -> MessageModel:
         result = await self.db_session.execute(
             select(MessageModel).where(MessageModel.message_id == message_id)
         )
@@ -964,6 +1028,12 @@ class ChatSessionService:
         if message.status == MessageStatusEnum.CANCELLED.value:
             return message
         if message.status != MessageStatusEnum.SUCCEEDED.value:
+            if content is not None:
+                message.content = content
+            if usage is not None:
+                context = message.context or {}
+                context["usage"] = usage
+                message.context = context
             message.status = MessageStatusEnum.SUCCEEDED.value
             message.completed_at = datetime.now(timezone.utc)
             if message.generation_id:
@@ -976,6 +1046,59 @@ class ChatSessionService:
                     session_model.active_generation_id = None
             await self.db_session.commit()
             await self.db_session.refresh(message)
+        return message
+
+    async def cancel_streaming_message(
+        self,
+        message_id: int,
+        generation_id: Optional[str],
+        content: str,
+        usage: Optional[Dict[str, int]],
+    ) -> MessageModel:
+        """Persist a mid-stream cancellation.
+
+        Called by the SSE loop after it detects the Redis cancel flag.
+        No Redis lookup is performed here — the caller already verified it.
+
+        The cancel_message endpoint may have already written CANCELLED to DB
+        (it is what originally set the Redis flag). In that case we still want
+        to persist partial content/usage without overwriting cancelled_at.
+        """
+        result = await self.db_session.execute(
+            select(MessageModel).where(MessageModel.message_id == message_id)
+        )
+        message = result.scalar_one_or_none()
+        if message is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="MESSAGE_NOT_FOUND",
+            )
+
+        now = datetime.now(timezone.utc)
+        current_status = message.status.value if isinstance(message.status, MessageStatusEnum) else message.status
+        # If cancel_message endpoint already wrote CANCELLED, preserve its
+        # cancelled_at; otherwise stamp it now.
+        if current_status != MessageStatusEnum.CANCELLED.value:
+            message.status = MessageStatusEnum.CANCELLED.value
+            message.cancelled_at = now
+        # Persist partial content/usage so callers can inspect what was emitted.
+        if content is not None:
+            message.content = content
+        if usage is not None:
+            context = message.context or {}
+            context["usage"] = usage
+            message.context = context
+        message.completed_at = message.completed_at or now
+        if generation_id:
+            session_result = await self.db_session.execute(
+                select(ChatSessionModel).where(ChatSessionModel.session_id == message.session_id)
+            )
+            session_model = session_result.scalar_one_or_none()
+            if session_model and session_model.active_generation_id == generation_id:
+                session_model.status = "idle"
+                session_model.active_generation_id = None
+        await self.db_session.commit()
+        await self.db_session.refresh(message)
         return message
 
     async def get_message_status(self, message_id: int) -> Optional[str]:
@@ -1053,6 +1176,16 @@ class ChatSessionService:
             if reason:
                 context["cancel_reason"] = reason
             message.context = context
+            if message.generation_id:
+                try:
+                    redis_client = await get_redis_client()
+                    await redis_client.set(
+                        self._cancel_key(message.generation_id),
+                        "1",
+                        ex=CANCEL_TTL_SECONDS,
+                    )
+                except Exception as exc:
+                    logger.warning("Redis cancel flag set failed: %s", exc)
 
             if message.generation_id:
                 session_result = await self.db_session.execute(

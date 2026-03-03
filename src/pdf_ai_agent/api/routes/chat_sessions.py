@@ -7,6 +7,7 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing import List
 
 from pdf_ai_agent.api.schemas.chat_schemas import (
     ChatContextSummary,
@@ -369,27 +370,72 @@ async def ask_message(
                 "message.created",
                 {"user_message_id": user_message.message_id},
             )
-            text = assistant_message.content or ""
+
+            # Transition queued -> streaming right before we start yielding deltas.
+            await chat_service.start_streaming_message(
+                message_id=assistant_message.message_id,
+                generation_id=assistant_message.generation_id,
+            )
+
+            # In MVP, we "generate" by chunking; in a real LLM integration this
+            # loop becomes the token/chunk streaming loop.
+            if assistant_message.content:
+                full_text = assistant_message.content
+            else:
+                prompt_text = user_message.content or ""
+                full_text = (
+                    "MVP response: "
+                    f"{prompt_text[:500]}"
+                    + ("..." if len(prompt_text) > 500 else "")
+                )
+
+            emitted_parts: List[str] = []
             chunk_size = 50
-            for start in range(0, len(text), chunk_size):
-                status_value = await chat_service.get_message_status(assistant_message.message_id)
-                if status_value == "cancelled":
+            for start in range(0, len(full_text), chunk_size):
+                if await chat_service.is_generation_cancelled(assistant_message.generation_id):
+                    partial_text = "".join(emitted_parts)
+                    usage = chat_service._estimate_usage(
+                        prompt_text=user_message.content or "",
+                        completion_text=partial_text,
+                    )
+                    # Caller already confirmed the flag; no Redis re-check inside.
+                    await chat_service.cancel_streaming_message(
+                        message_id=assistant_message.message_id,
+                        generation_id=assistant_message.generation_id,
+                        content=partial_text,
+                        usage=usage,
+                    )
                     yield _format_sse_event(
                         "message.cancelled",
                         {"message_id": assistant_message.message_id, "status": "cancelled"},
                     )
                     return
+
+                chunk = full_text[start : start + chunk_size]
+                emitted_parts.append(chunk)
                 yield _format_sse_event(
                     "assistant.delta",
-                    {"text": text[start : start + chunk_size]},
+                    {"text": chunk},
                 )
-            await chat_service.finalize_message(assistant_message.message_id)
+
+            final_text = "".join(emitted_parts)
+            usage = chat_service._estimate_usage(
+                prompt_text=user_message.content or "",
+                completion_text=final_text,
+            )
+            # Generation completed normally; finalize_message respects a race-condition
+            # CANCELLED status if cancel_message endpoint fired at the last moment.
+            await chat_service.finalize_message(
+                message_id=assistant_message.message_id,
+                content=final_text,
+                usage=usage,
+            )
             yield _format_sse_event(
                 "assistant.completed",
                 {
                     "assistant_message_id": assistant_message.message_id,
                     "citations": assistant_message.citation or [],
-                    "usage": assistant_usage or {},
+                    "usage": usage or {},
                 },
             )
 
@@ -513,25 +559,48 @@ async def assist_message(
 
             text = assistant_message.content or ""
             chunk_size = 50
+            emitted_parts: List[str] = []
             for start in range(0, len(text), chunk_size):
-                status_value = await chat_service.get_message_status(assistant_message.message_id)
-                if status_value == "cancelled":
+                if await chat_service.is_generation_cancelled(assistant_message.generation_id):
+                    partial_text = "".join(emitted_parts)
+                    partial_usage = chat_service._estimate_usage(
+                        prompt_text=user_message.content or "",
+                        completion_text=partial_text,
+                    )
+                    # Persist partial content; no Redis re-check inside.
+                    await chat_service.cancel_streaming_message(
+                        message_id=assistant_message.message_id,
+                        generation_id=assistant_message.generation_id,
+                        content=partial_text,
+                        usage=partial_usage,
+                    )
                     yield _format_sse_event(
                         "message.cancelled",
                         {"message_id": assistant_message.message_id, "status": "cancelled"},
                     )
                     return
+                chunk = text[start : start + chunk_size]
+                emitted_parts.append(chunk)
                 yield _format_sse_event(
                     "assistant.delta",
-                    {"text": text[start : start + chunk_size]},
+                    {"text": chunk},
                 )
-            await chat_service.finalize_message(assistant_message.message_id)
+            usage = chat_service._estimate_usage(
+                prompt_text=user_message.content or "",
+                completion_text=text,
+            )
+            # Generation completed normally.
+            await chat_service.finalize_message(
+                message_id=assistant_message.message_id,
+                content=text,
+                usage=usage,
+            )
             yield _format_sse_event(
                 "assistant.completed",
                 {
                     "assistant_message_id": assistant_message.message_id,
                     "citations": assistant_message.citation or [],
-                    "usage": assistant_usage or {},
+                    "usage": usage or {},
                 },
             )
 

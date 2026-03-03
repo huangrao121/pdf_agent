@@ -8,11 +8,13 @@ load_dotenv(".env.dev")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from pdf_ai_agent.config.database.init_database import get_database_config, init_database, close_engine
-
+    from pdf_ai_agent.redis.init_redis import init_redis_client_sync, close_redis_client
     config = get_database_config()
+    await init_redis_client_sync()
     await init_database(config)
     yield
     await close_engine()
+    await close_redis_client()
 
 
 # 入口函数
