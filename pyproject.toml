@@ -30,6 +30,7 @@ dependencies = [
     "google-auth>=2.47.0",
     "requests>=2.31.0",
     "ruff>=0.14.14",
+    "redis>=7.2.1",
 ]
 
 [project.optional-dependencies]
